@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Image as ImageIcon,
   Loader2,
+  Package,
   Palette,
   Pencil,
   Plus,
@@ -264,6 +265,12 @@ export default function BrandSpace() {
           {brand.lastExportedAt ? (
             <span className="last-export">上次导出 {formatDateTime(brand.lastExportedAt)}</span>
           ) : null}
+          <button
+            className="secondary-btn small"
+            onClick={() => useApp.getState().setNav({ type: 'products' })}
+          >
+            <Package size={14} /> 产品手册
+          </button>
           <button className="secondary-btn small" onClick={openProfile}>
             <Pencil size={14} /> 编辑品牌
           </button>

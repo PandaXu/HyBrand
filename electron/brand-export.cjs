@@ -570,4 +570,12 @@ async function exportBrandKit({ destination }) {
   }
 }
 
-module.exports = { exportBrandKit, colorValues }
+module.exports = {
+  exportBrandKit,
+  colorValues,
+  escapeHtml,
+  sanitize,
+  stamp,
+  nextFolder,
+  exists
+}

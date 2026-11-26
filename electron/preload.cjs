@@ -55,6 +55,20 @@ contextBridge.exposeInMainWorld('hybrand', {
   updateBrandTypeScale: (payload) => invoke('brand:update-typescale', payload),
   saveBrandPairing: (payload) => invoke('brand:save-pairing', payload),
   removeBrandPairing: (id) => invoke('brand:remove-pairing', { id }),
+
+  createProduct: (payload) => invoke('product:create', payload),
+  updateProduct: (id, patch) => invoke('product:update', { ...patch, id }),
+  deleteProduct: (id) => invoke('product:delete', { id }),
+  saveProductLogo: (payload) => invoke('product:save-logo', payload),
+  removeProductLogo: (id) => invoke('product:remove-logo', { id }),
+  saveProductColor: (payload) => invoke('product:save-color', payload),
+  removeProductColor: (productId, colorId) =>
+    invoke('product:remove-color', { productId, colorId }),
+  updateProductTypefaces: (payload) => invoke('product:update-typefaces', payload),
+  exportProductManual: (productId, destination) =>
+    invoke('product:export', { productId, destination }),
+  importProductManual: (sourceDir) => invoke('product:import', { sourceDir }),
+
   exportBrandKit: (destination) => invoke('brand:export', { destination }),
   importBrandKit: (sourceDir) => invoke('brand:import-kit', { sourceDir }),
 

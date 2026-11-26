@@ -46,24 +46,62 @@ const LOGO_ROLES = new Set(['primary', 'reverse', 'monochrome', 'horizontal', 'v
 const TYPE_ROLES = new Set(['brand', 'heading', 'body'])
 const COLOR_CATEGORIES = new Set(['primary', 'secondary', 'accent', 'neutral', 'background', 'text'])
 const FONT_WEIGHTS = new Set([100, 200, 300, 400, 500, 600, 700, 800, 900])
+const PRODUCT_STATUSES = new Set(['concept', 'upcoming', 'active', 'archived'])
 
-function normalizeBrand(brand) {
-  const source = brand && typeof brand === 'object' ? brand : {}
-  const now = new Date().toISOString()
-
-  const colors = (Array.isArray(source.colors) ? source.colors : [])
+function normalizeColorList(colors, fallbackName) {
+  return (Array.isArray(colors) ? colors : [])
     .filter((color) => color && typeof color === 'object')
     .map((color) => {
       const hex = String(color.hex || '')
       return {
         id: typeof color.id === 'string' && color.id ? color.id : crypto.randomUUID(),
-        name: String(color.name || '品牌色').slice(0, 40),
+        name: String(color.name || fallbackName).slice(0, 40),
         hex: /^#[0-9a-f]{6}$/i.test(hex) ? hex.toUpperCase() : '#5B6CFF',
         pantone: String(color.pantone || '').slice(0, 40),
         category: COLOR_CATEGORIES.has(color.category) ? color.category : 'primary',
         usage: String(color.usage || '').slice(0, 200)
       }
     })
+}
+
+function normalizeProduct(product, brand, now) {
+  const source = product && typeof product === 'object' ? product : {}
+  const typefaceIds = new Set((brand.typography || []).map((item) => item.id))
+  const launchDate = String(source.launchDate || '')
+  return {
+    id: typeof source.id === 'string' && source.id ? source.id : crypto.randomUUID(),
+    name: String(source.name || '未命名产品').slice(0, 80),
+    tagline: String(source.tagline || '').slice(0, 160),
+    description: String(source.description || '').slice(0, 2000),
+    category: String(source.category || '').slice(0, 40),
+    status: PRODUCT_STATUSES.has(source.status) ? source.status : 'concept',
+    launchDate: /^\d{4}-\d{2}-\d{2}$/.test(launchDate) ? launchDate : '',
+    sku: String(source.sku || '').slice(0, 60),
+    logoAssetId:
+      typeof source.logoAssetId === 'string' && source.logoAssetId
+        ? source.logoAssetId
+        : null,
+    logoLabel: String(source.logoLabel || '').slice(0, 80),
+    logoMinWidth: String(source.logoMinWidth || '').slice(0, 60),
+    logoClearSpace: String(source.logoClearSpace || '').slice(0, 80),
+    logoNote: String(source.logoNote || '').slice(0, 500),
+    colors: normalizeColorList(source.colors, '产品色'),
+    headingTypefaceId: typefaceIds.has(source.headingTypefaceId)
+      ? source.headingTypefaceId
+      : null,
+    bodyTypefaceId: typefaceIds.has(source.bodyTypefaceId) ? source.bodyTypefaceId : null,
+    folderId: typeof source.folderId === 'string' && source.folderId ? source.folderId : null,
+    usage: String(source.usage || '').slice(0, 5000),
+    createdAt: source.createdAt || now,
+    updatedAt: source.updatedAt || source.createdAt || now
+  }
+}
+
+function normalizeBrand(brand) {
+  const source = brand && typeof brand === 'object' ? brand : {}
+  const now = new Date().toISOString()
+
+  const colors = normalizeColorList(source.colors, '品牌色')
 
   const logoVariants = (Array.isArray(source.logoVariants) ? source.logoVariants : [])
     .filter((variant) => variant && typeof variant.assetId === 'string' && variant.assetId)
@@ -186,6 +224,9 @@ function normalize(data) {
             id: typeof space.id === 'string' && space.id ? space.id : crypto.randomUUID(),
             name: String(space.name || brand.name || '品牌空间').slice(0, 80),
             brand,
+            products: (Array.isArray(space.products) ? space.products : []).map(
+              (product) => normalizeProduct(product, brand, now)
+            ),
             createdAt: space.createdAt || now
           }
         })
@@ -199,6 +240,7 @@ function normalize(data) {
         id: brand.id || crypto.randomUUID(),
         name: brand.name || '我的品牌',
         brand,
+        products: [],
         createdAt: brand.createdAt || now
       }
     ]
@@ -228,15 +270,32 @@ function normalize(data) {
     }))
 
   const folderById = new Map(folders.map((folder) => [folder.id, folder]))
+  const assetById = new Map(assets.map((asset) => [asset.id, asset]))
   for (const asset of assets) {
     asset.linkedFolderIds = asset.linkedFolderIds.filter((id) => {
       const folder = folderById.get(id)
       return folder && folder.spaceId === asset.spaceId && id !== asset.folderId
     })
   }
+  for (const space of spaces) {
+    const seen = new Set()
+    space.products = (space.products || []).filter((product) => {
+      if (seen.has(product.id)) return false
+      seen.add(product.id)
+      const folder = product.folderId ? folderById.get(product.folderId) : null
+      if (product.folderId && (!folder || folder.spaceId !== space.id)) {
+        product.folderId = null
+      }
+      const logoAsset = product.logoAssetId ? assetById.get(product.logoAssetId) : null
+      if (product.logoAssetId && (!logoAsset || logoAsset.spaceId !== space.id)) {
+        product.logoAssetId = null
+      }
+      return true
+    })
+  }
 
   return {
-    version: 2,
+    version: 3,
     spaces,
     activeSpaceId,
     assets,
@@ -327,6 +386,14 @@ function getBrand() {
   return getSpace().brand
 }
 
+function getProducts() {
+  return getSpace().products || []
+}
+
+function getProduct(id) {
+  return getProducts().find((product) => product.id === id) || null
+}
+
 function getActiveAssets() {
   return state.assets.filter((asset) => asset.spaceId === state.activeSpaceId)
 }
@@ -350,6 +417,7 @@ function createSpace(name) {
     id: crypto.randomUUID(),
     name: clean,
     brand,
+    products: [],
     createdAt: now
   }
   state.spaces.push(space)
@@ -428,6 +496,7 @@ function snapshot() {
       brandName: space.brand.name || space.name,
       createdAt: space.createdAt,
       assetCount: assets.filter((asset) => !asset.trashed).length,
+      productCount: (space.products || []).length,
       primaryLogoAssetId: logoAsset?.id || null
     }
   })
@@ -439,6 +508,7 @@ function snapshot() {
     assets: activeAssets,
     folders: activeFolders,
     brand: getBrand(),
+    products: getSpace().products || [],
     stats: {
       active,
       trash,
@@ -509,6 +579,8 @@ module.exports = {
   getActiveSpaceId,
   getSpaces,
   getBrand,
+  getProducts,
+  getProduct,
   getActiveAssets,
   getActiveFolders,
   switchSpace,

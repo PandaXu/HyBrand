@@ -193,7 +193,10 @@ async function doImport(inputPaths, folderId) {
       ? folderId
       : null
   const { entries, foldersCreated } = await buildImportPlan(cleanPaths, targetFolder, spaceId)
-  const spaceAssets = state.assets.filter((asset) => asset.spaceId === spaceId)
+  // 回收站不参与去重：源文件被删除后，重新导入应生成可见素材，而不是被静默跳过。
+  const spaceAssets = state.assets.filter(
+    (asset) => asset.spaceId === spaceId && !asset.trashed
+  )
   const hashToAsset = new Map(spaceAssets.map((asset) => [asset.hash, asset]))
   const addedIds = []
   const addedItems = []
@@ -213,7 +216,6 @@ async function doImport(inputPaths, folderId) {
         let linkedNow = false
         if (
           linkFolderId &&
-          !existing.trashed &&
           existing.folderId !== linkFolderId &&
           !existing.linkedFolderIds.includes(linkFolderId)
         ) {
@@ -227,7 +229,6 @@ async function doImport(inputPaths, folderId) {
             name: path.basename(file),
             assetId: existing.id,
             folderId: existing.folderId || null,
-            trashed: Boolean(existing.trashed),
             linked: linkedNow,
             linkedFolderId: linkedNow ? linkFolderId : null
           })

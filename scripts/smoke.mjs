@@ -661,6 +661,107 @@ try {
   await page.waitForSelector('.grid-view .asset-card')
   console.log('✓ 品牌空间、Logo/品牌色/字体、完整度与品牌包导出正常')
 
+  await brandSidebar.getByRole('button', { name: /产品手册/ }).click()
+  await page.waitForSelector('.product-page')
+  await page.waitForSelector('.product-empty')
+  await page.locator('.brand-top-actions').getByRole('button', { name: '新建产品' }).click()
+  await page.waitForSelector('.modal-card')
+  await page.fill('input[name="product-name"]', '春日限定乌龙')
+  await page.fill('input[name="product-category"]', '茶饮 / 瓶装')
+  await page.selectOption('select[name="product-status"]', 'active')
+  await page.fill('input[name="product-launch-date"]', '2026-03-01')
+  await page.fill('input[name="product-sku"]', 'SPRING-01')
+  await page.selectOption('select[name="product-folder"]', folder.id)
+  await page.fill('input[name="product-tagline"]', '把春天装进一瓶茶里')
+  await page.fill(
+    '[name="product-description"]',
+    '春日限定乌龙面向春季礼赠与门店即饮场景，使用轻焙火乌龙与花香。'
+  )
+  await page.fill(
+    '[name="product-usage"]',
+    '包装必须使用产品 Logo；产品摄影保留留白；不改变产品色比例。'
+  )
+  await page.getByRole('button', { name: '创建产品' }).click()
+  await page.waitForSelector('.modal-card', { state: 'detached' })
+  await page.waitForSelector('.product-hero')
+  const createdProduct = await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.products.length === 1 && state.products[0].name === '春日限定乌龙'
+      ? state.products[0]
+      : null
+  }, 10000)
+  assert.equal(createdProduct.folderId, folder.id)
+  assert.equal(createdProduct.status, 'active')
+
+  await page.getByRole('button', { name: '添加产品 Logo' }).click()
+  await page.waitForSelector('.modal-card')
+  await page.locator('.logo-pick', { hasText: 'hybrand-1.png' }).click()
+  await page.fill('input[name="logo-label"]', '产品标识')
+  await page.fill('input[name="logo-min-width"]', '80px')
+  await page.fill('input[name="logo-clear-space"]', 'Logo 高度的 40%')
+  await page.getByRole('button', { name: '保存产品 Logo' }).click()
+  await page.waitForSelector('.modal-card', { state: 'detached' })
+
+  await page.locator('.colors-card .card-head button[title="添加产品色"]').click()
+  await page.waitForSelector('.modal-card')
+  await page.fill('input[name="brand-color-name"]', '春日绿')
+  await page.fill('input[name="color-hex"]', '#3A9D6F')
+  await page.getByRole('button', { name: '保存产品色' }).click()
+  await page.waitForSelector('.modal-card', { state: 'detached' })
+
+  const productBrand = (await snapshot(page)).brand
+  const productBold = productBrand.typography.find((item) => item.name === 'Bold')
+  const productRegular = productBrand.typography.find((item) => item.name === 'Regular')
+  if (productBold && productRegular) {
+    await page.locator('.product-type-card .card-head button[title="设置产品字体"]').click()
+    await page.waitForSelector('.modal-card')
+    await page.selectOption('select[name="product-heading-font"]', productBold.id)
+    await page.selectOption('select[name="product-body-font"]', productRegular.id)
+    await page.getByRole('button', { name: '保存字体设置' }).click()
+    await page.waitForSelector('.modal-card', { state: 'detached' })
+  }
+
+  const productSnapshot = await waitFor(async () => {
+    const state = await snapshot(page)
+    const product = state.products.find((item) => item.id === createdProduct.id)
+    if (
+      product?.logoAssetId &&
+      product.colors.length === 1 &&
+      (!productBold || product.headingTypefaceId === productBold.id)
+    ) {
+      return state
+    }
+    return null
+  }, 10000)
+  const manual = productSnapshot.products.find((item) => item.id === createdProduct.id)
+  assert.equal(manual.logoLabel, '产品标识')
+  assert.equal(manual.colors[0].hex, '#3A9D6F')
+  assert.equal(manual.folderId, folder.id)
+  if (productBold && productRegular) {
+    assert.equal(manual.headingTypefaceId, productBold.id)
+    assert.equal(manual.bodyTypefaceId, productRegular.id)
+  }
+  await page.waitForFunction(
+    () => document.querySelector('.product-page .score-ring span')?.textContent !== '0%',
+    null,
+    { timeout: 5000 }
+  )
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: path.join(artifacts, '25-product-manual.png') })
+
+  await brandSidebar.getByRole('button', { name: /产品手册/ }).click()
+  await page.waitForSelector('.product-card')
+  assert.equal(await page.locator('.product-card').count(), 1)
+  await page.fill('.product-search input', '春日')
+  assert.equal(await page.locator('.product-card').count(), 1)
+  await page.fill('.product-search input', '')
+  await page.waitForTimeout(250)
+  await page.screenshot({ path: path.join(artifacts, '26-product-index.png') })
+  console.log('✓ 产品手册创建、Logo、产品色、字体与素材文件夹关联正常')
+
+  await brandSidebar.getByRole('button', { name: /全部素材/ }).click()
+  await page.waitForSelector('.grid-view .asset-card')
+
   await page.locator('.create-wrap .primary-btn').click()
   await page.waitForSelector('.create-menu')
   await page.locator('.create-menu').getByRole('button', { name: /上传文件夹/ }).waitFor()
@@ -758,6 +859,8 @@ try {
   const firstSpaceName = firstSpaceState.spaces[0].name
   const firstBrandName = firstSpaceState.brand.name
   const firstAssetTotal = firstSpaceState.stats.total
+  assert.equal(firstSpaceState.products.length, 1, '产品应属于第一个品牌空间')
+  const firstProductId = firstSpaceState.products[0].id
 
   await page.locator('.space-switcher').click()
   await page.waitForSelector('.space-menu')
@@ -774,6 +877,7 @@ try {
   assert.equal(secondSpaceState.spaces.length, 2)
   assert.equal(secondSpaceState.stats.total, 0, '新空间应为空')
   assert.equal(secondSpaceState.brand.name, '第二品牌')
+  assert.equal(secondSpaceState.products.length, 0, '新品牌空间不应继承其他空间的产品')
   const secondSpaceId = secondSpaceState.activeSpaceId
   assert.equal(
     secondSpaceState.spaces.find((space) => space.id === secondSpaceId).assetCount,
@@ -805,6 +909,8 @@ try {
   )
   assert.equal(backState.brand.name, firstBrandName)
   assert.equal(backState.stats.total, firstAssetTotal, '切回后原空间数据应完整')
+  assert.equal(backState.products.length, 1, '切回后产品手册应完整')
+  assert.equal(backState.products[0].id, firstProductId)
   assert.equal(
     backState.spaces.find((space) => space.id === secondSpaceId).assetCount,
     1,
@@ -839,6 +945,7 @@ try {
   assert.equal(finalSpaceState.spaces.length, 1)
   assert.equal(finalSpaceState.brand.name, firstBrandName)
   assert.equal(finalSpaceState.stats.total, firstAssetTotal, '删除空间不应影响原空间')
+  assert.equal(finalSpaceState.products.length, 1)
   console.log('✓ 多品牌空间创建、切换、数据隔离、重命名与删除正常')
 
   const kitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hybrand-kit-'))
@@ -867,8 +974,139 @@ try {
   assert.equal(kitState.brand.typeScale.steps.display.typefaceId, importedBold.id)
   await page.evaluate((id) => window.hybrand.deleteSpace(id), importedKit.spaceId)
   await waitFor(async () => (await snapshot(page)).activeSpaceId === firstSpaceId, 10000)
+  await page.waitForFunction(
+    (name) => document.querySelector('.space-switcher-copy strong')?.textContent === name,
+    firstSpaceName,
+    { timeout: 5000 }
+  )
   fs.rmSync(kitDir, { recursive: true, force: true })
   console.log('✓ 品牌包导入为新空间、规范与字体映射正常')
+
+  await brandSidebar.getByRole('button', { name: /产品手册/ }).click()
+  await page.waitForSelector('.product-card')
+  const manualExportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hybrand-product-export-'))
+  const exportedManual = await page.evaluate(
+    ({ productId, destination }) =>
+      window.hybrand.exportProductManual(productId, destination),
+    { productId: firstProductId, destination: manualExportDir }
+  )
+  assert.ok(exportedManual?.path, '产品手册应导出成功')
+  assert.ok(fs.existsSync(path.join(exportedManual.path, 'index.html')))
+  assert.ok(fs.existsSync(path.join(exportedManual.path, 'product.json')))
+  assert.ok(fs.existsSync(path.join(exportedManual.path, 'README.txt')))
+  const manualManifest = JSON.parse(
+    fs.readFileSync(path.join(exportedManual.path, 'product.json'), 'utf8')
+  )
+  assert.equal(manualManifest.app, 'HyBrand')
+  assert.equal(manualManifest.kind, 'product-manual')
+  assert.equal(manualManifest.product.name, '春日限定乌龙')
+  assert.equal(manualManifest.product.colors[0].hex, '#3A9D6F')
+  assert.ok(manualManifest.assets.some((entry) => entry.role === 'logo'), '导出包应包含产品 Logo')
+  assert.ok(manualManifest.assets.length >= 1)
+  for (const entry of manualManifest.assets) {
+    assert.ok(
+      fs.existsSync(path.join(exportedManual.path, entry.file)),
+      `导出包应包含素材文件 ${entry.file}`
+    )
+  }
+  const manualHtml = fs.readFileSync(path.join(exportedManual.path, 'index.html'), 'utf8')
+  assert.ok(manualHtml.includes('春日限定乌龙'))
+  assert.ok(manualHtml.includes('#3A9D6F'))
+  console.log('✓ 产品手册可导出为 HTML、JSON 与产品素材')
+
+  const productCard = page.locator('.product-card', { hasText: '春日限定乌龙' })
+  await productCard.hover()
+  await productCard.locator('button[title="删除产品"]').click()
+  await page.waitForSelector('.modal-card')
+  await page.locator('.modal-card').getByRole('button', { name: '删除产品' }).click()
+  await page.waitForSelector('.modal-card', { state: 'detached' })
+  await waitFor(async () => (await snapshot(page)).products.length === 0, 10000)
+  await page.waitForSelector('.product-empty')
+
+  const importedManual = await page.evaluate(
+    (directory) => window.hybrand.importProductManual(directory),
+    exportedManual.path
+  )
+  assert.ok(importedManual?.productId, '产品手册应导入成功')
+  assert.equal(importedManual.name, '春日限定乌龙')
+  const restoredState = await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.products.some((product) => product.id === importedManual.productId)
+      ? state
+      : null
+  }, 15000)
+  const restored = restoredState.products.find(
+    (product) => product.id === importedManual.productId
+  )
+  assert.ok(restored.logoAssetId, '导入后应恢复产品 Logo')
+  assert.equal(restored.colors.length, 1)
+  assert.equal(restored.colors[0].hex, '#3A9D6F')
+  assert.ok(restored.folderId, '导入后应创建产品素材文件夹')
+  assert.ok(restored.headingTypefaceId && restored.bodyTypefaceId, '导入后应匹配品牌字体')
+  const restoredFolderAssets = restoredState.assets.filter(
+    (asset) =>
+      asset.folderId === restored.folderId ||
+      (asset.linkedFolderIds || []).includes(restored.folderId)
+  )
+  assert.ok(restoredFolderAssets.length >= 1, '导入后产品素材文件夹应包含素材')
+  await page.waitForSelector('.product-card')
+  await page.locator('.product-card').first().click()
+  await page.waitForSelector('.product-hero')
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: path.join(artifacts, '27-product-imported.png') })
+  console.log('✓ 产品手册可导入，恢复 Logo、产品色、字体与素材文件夹')
+  fs.rmSync(manualExportDir, { recursive: true, force: true })
+
+  await brandSidebar.getByRole('button', { name: /全部素材/ }).click()
+  await page.waitForSelector('.grid-view .asset-card')
+
+  const trashFolders = await page.evaluate(async () => {
+    const source = await window.hybrand.createFolder('回收站链接源', null)
+    const target = await window.hybrand.createFolder('回收站链接目标', null)
+    return { source, target }
+  })
+  const trashFile = path.join(fixtures, '回收站快捷链接验证.txt')
+  fs.writeFileSync(trashFile, 'HyBrand 回收站快捷链接验证内容')
+  const trashFirst = await page.evaluate(
+    ({ file, folderId }) => window.hybrand.importPaths([file], folderId),
+    { file: trashFile, folderId: trashFolders.source.id }
+  )
+  assert.equal(trashFirst.added, 1, '回收站测试文件应首次导入')
+  const trashedId = trashFirst.items[0].id
+  await page.evaluate((id) => window.hybrand.batch([id], 'trash'), trashedId)
+  await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.assets.find((asset) => asset.id === trashedId)?.trashed
+  })
+
+  const trashReimport = await page.evaluate(
+    ({ file, folderId }) => window.hybrand.importPaths([file], folderId),
+    { file: trashFile, folderId: trashFolders.target.id }
+  )
+  assert.equal(trashReimport.duplicates, 0, '回收站中的文件不应阻止重新导入')
+  assert.equal(trashReimport.added, 1, '仅存在于回收站的内容应重新生成活动素材')
+  const activeId = trashReimport.items[0].id
+
+  const trashLink = await page.evaluate(
+    ({ file, folderId }) => window.hybrand.importPaths([file], folderId),
+    { file: trashFile, folderId: trashFolders.source.id }
+  )
+  assert.equal(trashLink.added, 0)
+  assert.equal(trashLink.duplicates, 1)
+  assert.equal(trashLink.linked, 1, '重新导入后再次重复，应创建快捷链接')
+
+  const trashEdge = await snapshot(page)
+  const trashedAsset = trashEdge.assets.find((asset) => asset.id === trashedId)
+  const activeAsset = trashEdge.assets.find((asset) => asset.id === activeId)
+  assert.ok(trashedAsset?.trashed, '原回收站素材应保持不变')
+  assert.deepEqual(trashedAsset.linkedFolderIds, [], '回收站素材不应接收快捷链接')
+  assert.ok(activeAsset && !activeAsset.trashed, '新活动素材应可见')
+  assert.equal(activeAsset.folderId, trashFolders.target.id)
+  assert.deepEqual(activeAsset.linkedFolderIds, [trashFolders.source.id])
+  await page.locator('.folder-row', { hasText: '回收站链接源' }).click()
+  await page.waitForSelector('.shortcut-badge')
+  await page.screenshot({ path: path.join(artifacts, '24-trash-shortcut.png') })
+  console.log('✓ 回收站不参与去重，重新导入后再次重复可正常生成快捷链接')
 
   assert.deepEqual(errors, [], `渲染进程不应有错误：\n${errors.join('\n')}`)
   console.log('\nHyBrand 冒烟测试全部通过')

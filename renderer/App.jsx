@@ -12,6 +12,9 @@ import FolderCards from './components/FolderCards.jsx'
 import AssetViews from './components/AssetViews.jsx'
 import DetailsPanel from './components/DetailsPanel.jsx'
 import BrandSpace from './components/BrandSpace.jsx'
+import ProductsPage from './components/ProductsPage.jsx'
+import ProductSpace from './components/ProductSpace.jsx'
+import ProductDialogs from './components/ProductDialogs.jsx'
 import BrandDialogs from './components/BrandDialogs.jsx'
 import Dialogs from './components/Dialogs.jsx'
 import {
@@ -349,7 +352,7 @@ export default function App() {
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        if (state.nav.type === 'brand') {
+        if (['brand', 'products', 'product'].includes(state.nav.type)) {
           state.setNav({ type: 'all' })
           setTimeout(() => {
             searchRef.current?.focus()
@@ -384,7 +387,7 @@ export default function App() {
       }
 
       if (typing) return
-      if (state.nav.type === 'brand') return
+      if (['brand', 'products', 'product'].includes(state.nav.type)) return
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
         event.preventDefault()
@@ -475,7 +478,10 @@ export default function App() {
 
   const filtersActive = hasActiveFilters(filters)
   const showDetails =
-    selection.length === 1 && activeAsset && !lightboxId && nav.type !== 'brand'
+    selection.length === 1 &&
+    activeAsset &&
+    !lightboxId &&
+    !['brand', 'products', 'product'].includes(nav.type)
 
   if (!ready) {
     return (
@@ -521,6 +527,10 @@ export default function App() {
       <div className="workspace">
         {nav.type === 'brand' ? (
           <BrandSpace />
+        ) : nav.type === 'products' ? (
+          <ProductsPage />
+        ) : nav.type === 'product' ? (
+          <ProductSpace productId={nav.productId} />
         ) : (
           <>
         <TopBar
@@ -639,7 +649,7 @@ export default function App() {
         />
       ) : null}
 
-      {selection.length > 1 && nav.type !== 'brand' ? (
+      {selection.length > 1 && !['brand', 'products', 'product'].includes(nav.type) ? (
         <SelectionBar
           count={selection.length}
           isTrash={nav.type === 'trash'}
@@ -653,7 +663,7 @@ export default function App() {
         />
       ) : null}
 
-      {lightboxAsset && nav.type !== 'brand' ? (
+      {lightboxAsset && !['brand', 'products', 'product'].includes(nav.type) ? (
         <Lightbox
           asset={lightboxAsset}
           assets={view.assets}
@@ -671,6 +681,7 @@ export default function App() {
 
       <Dialogs />
       <BrandDialogs />
+      <ProductDialogs />
       <Toasts />
       {dragging ? <DragOverlay /> : null}
     </div>

@@ -125,7 +125,11 @@ function BrandProfileDialog({ onClose }) {
 
 function LogoDialog({ dialog, onClose }) {
   const library = useApp((state) => state.library)
-  const variant = dialog.variant || null
+  const product = dialog.productId
+    ? (library.products || []).find((item) => item.id === dialog.productId)
+    : null
+  const isProduct = Boolean(product)
+  const variant = isProduct ? null : dialog.variant || null
   const candidates = useMemo(
     () =>
       library.assets
@@ -138,20 +142,32 @@ function LogoDialog({ dialog, onClose }) {
         .sort((a, b) => String(b.importedAt).localeCompare(String(a.importedAt))),
     [library.assets]
   )
-  const initialAsset = candidates.find((asset) => asset.id === variant?.assetId)
+  const initialAsset = candidates.find(
+    (asset) => asset.id === (isProduct ? product?.logoAssetId : variant?.assetId)
+  )
   const [assetId, setAssetId] = useState(initialAsset?.id || '')
   const [role, setRole] = useState(variant?.role || dialog.role || 'primary')
-  const [label, setLabel] = useState(variant?.label || '')
-  const [minWidth, setMinWidth] = useState(variant?.minWidth || '')
-  const [clearSpace, setClearSpace] = useState(variant?.clearSpace || '')
-  const [note, setNote] = useState(variant?.note || '')
+  const [label, setLabel] = useState(
+    isProduct ? product?.logoLabel || '' : variant?.label || ''
+  )
+  const [minWidth, setMinWidth] = useState(
+    isProduct ? product?.logoMinWidth || '' : variant?.minWidth || ''
+  )
+  const [clearSpace, setClearSpace] = useState(
+    isProduct ? product?.logoClearSpace || '' : variant?.clearSpace || ''
+  )
+  const [note, setNote] = useState(
+    isProduct ? product?.logoNote || '' : variant?.note || ''
+  )
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
 
   const filtered = candidates.filter((asset) =>
     asset.name.toLowerCase().includes(query.trim().toLowerCase())
   )
-  const lostAsset = variant && !initialAsset
+  const lostAsset = isProduct
+    ? Boolean(product?.logoAssetId && !initialAsset)
+    : Boolean(variant && !initialAsset)
 
   function choose(asset) {
     setAssetId(asset.id)
@@ -163,20 +179,36 @@ function LogoDialog({ dialog, onClose }) {
     if (!assetId || busy) return
     setBusy(true)
     const result = await callApi(
-      api.saveBrandLogo({
-        id: variant?.id,
-        assetId,
-        role,
-        label,
-        minWidth,
-        clearSpace,
-        note
-      }),
-      '保存 Logo 失败'
+      isProduct
+        ? api.saveProductLogo({
+            productId: product.id,
+            assetId,
+            label,
+            minWidth,
+            clearSpace,
+            note
+          })
+        : api.saveBrandLogo({
+            id: variant?.id,
+            assetId,
+            role,
+            label,
+            minWidth,
+            clearSpace,
+            note
+          }),
+      isProduct ? '保存产品 Logo 失败' : '保存 Logo 失败'
     )
     setBusy(false)
     if (result) {
-      toast(variant ? 'Logo 变体已更新' : 'Logo 变体已添加', 'success')
+      toast(
+        isProduct
+          ? '产品 Logo 已保存'
+          : variant
+            ? 'Logo 变体已更新'
+            : 'Logo 变体已添加',
+        'success'
+      )
       onClose()
     }
   }
@@ -185,13 +217,21 @@ function LogoDialog({ dialog, onClose }) {
     <Modal onClose={onClose} width={760}>
       <form onSubmit={submit}>
         <div className="modal-head">
-          <h2>{variant ? '编辑 Logo 变体' : '添加 Logo 变体'}</h2>
+          <h2>
+            {isProduct
+              ? '产品 Logo'
+              : variant
+                ? '编辑 Logo 变体'
+                : '添加 Logo 变体'}
+          </h2>
           <button type="button" className="icon-btn" onClick={onClose}>
             <X size={16} />
           </button>
         </div>
         <p className="modal-message">
-          从素材库选择 Logo 文件，并补充使用规则。素材文件不会被修改。
+          {isProduct
+            ? '从素材库选择产品标识，并补充使用规则。素材文件不会被修改。'
+            : '从素材库选择 Logo 文件，并补充使用规则。素材文件不会被修改。'}
         </p>
         {lostAsset ? (
           <p className="form-warning">原 Logo 素材已不可用，请重新选择。</p>
@@ -245,18 +285,20 @@ function LogoDialog({ dialog, onClose }) {
         )}
 
         <div className="brand-form-grid">
-          <label className="brand-field">
-            <span>变体角色</span>
-            <select name="logo-role" value={role} onChange={(event) => setRole(event.target.value)}>
-              {LOGO_ROLES.map((item) => (
-                <option key={item.value} value={item.value}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="brand-field">
-            <span>显示名称</span>
+          {!isProduct ? (
+            <label className="brand-field">
+              <span>变体角色</span>
+              <select name="logo-role" value={role} onChange={(event) => setRole(event.target.value)}>
+                {LOGO_ROLES.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className={`brand-field ${isProduct ? 'full' : ''}`}>
+            <span>{isProduct ? '产品标识名称' : '显示名称'}</span>
             <input
               name="logo-label"
               value={label}
@@ -304,7 +346,7 @@ function LogoDialog({ dialog, onClose }) {
           </button>
           <button type="submit" className="primary-btn" disabled={!assetId || busy}>
             {busy ? <Loader2 size={15} className="spin" /> : null}
-            保存 Logo
+            {isProduct ? '保存产品 Logo' : '保存 Logo'}
           </button>
         </div>
       </form>
@@ -314,8 +356,13 @@ function LogoDialog({ dialog, onClose }) {
 
 function ColorDialog({ dialog, onClose }) {
   const library = useApp((state) => state.library)
+  const product = dialog.productId
+    ? (library.products || []).find((item) => item.id === dialog.productId)
+    : null
+  const isProduct = Boolean(product)
   const color = dialog.color || null
-  const [name, setName] = useState(color?.name || '品牌色')
+  const colorLabel = isProduct ? '产品色' : '品牌色'
+  const [name, setName] = useState(color?.name || colorLabel)
   const [hex, setHex] = useState(color?.hex || '#5B6CFF')
   const [pantone, setPantone] = useState(color?.pantone || '')
   const [category, setCategory] = useState(color?.category || 'primary')
@@ -345,12 +392,31 @@ function ColorDialog({ dialog, onClose }) {
     if (!valid || busy) return
     setBusy(true)
     const result = await callApi(
-      api.saveBrandColor({ id: color?.id, name, hex, pantone, category, usage }),
-      '保存品牌色失败'
+      isProduct
+        ? api.saveProductColor({
+            productId: product.id,
+            id: color?.id,
+            name,
+            hex,
+            pantone,
+            category,
+            usage
+          })
+        : api.saveBrandColor({ id: color?.id, name, hex, pantone, category, usage }),
+      isProduct ? '保存产品色失败' : '保存品牌色失败'
     )
     setBusy(false)
     if (result) {
-      toast(color ? '品牌色已更新' : '品牌色已添加', 'success')
+      toast(
+        isProduct
+          ? color
+            ? '产品色已更新'
+            : '产品色已添加'
+          : color
+            ? '品牌色已更新'
+            : '品牌色已添加',
+        'success'
+      )
       onClose()
     }
   }
@@ -359,7 +425,11 @@ function ColorDialog({ dialog, onClose }) {
     <Modal onClose={onClose} width={440}>
       <form onSubmit={submit}>
         <div className="modal-head">
-          <h2>{color ? '编辑品牌色' : '添加品牌色'}</h2>
+          <h2>
+            {color
+              ? `编辑${colorLabel}`
+              : `添加${colorLabel}`}
+          </h2>
           <button type="button" className="icon-btn" onClick={onClose}>
             <X size={16} />
           </button>
@@ -493,7 +563,7 @@ function ColorDialog({ dialog, onClose }) {
           </button>
           <button type="submit" className="primary-btn" disabled={!valid || busy}>
             {busy ? <Loader2 size={15} className="spin" /> : null}
-            保存品牌色
+            保存{colorLabel}
           </button>
         </div>
       </form>
@@ -1004,10 +1074,10 @@ export default function BrandDialogs() {
   if (dialog.type === 'brand-profile') {
     return <BrandProfileDialog onClose={closeDialog} />
   }
-  if (dialog.type === 'brand-logo') {
+  if (dialog.type === 'brand-logo' || dialog.type === 'product-logo') {
     return <LogoDialog dialog={dialog} onClose={closeDialog} />
   }
-  if (dialog.type === 'brand-color') {
+  if (dialog.type === 'brand-color' || dialog.type === 'product-color') {
     return <ColorDialog dialog={dialog} onClose={closeDialog} />
   }
   if (dialog.type === 'brand-typeface') {

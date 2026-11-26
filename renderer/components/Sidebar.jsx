@@ -9,6 +9,7 @@ import {
   Hash,
   LayoutGrid,
   MoreHorizontal,
+  Package,
   Plus,
   Settings,
   Sparkles,
@@ -198,6 +199,7 @@ export default function Sidebar({
     .filter((folder) => !folder.parentId)
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   const brandScore = brandCompletion(library.brand, library.assets).score
+  const products = library.products || []
   const spaces = library.spaces || []
   const activeSpace =
     spaces.find((space) => space.id === library.activeSpaceId) || spaces[0] || null
@@ -255,6 +257,16 @@ export default function Sidebar({
             <Sparkles size={16} />
             <span className="nav-label">品牌手册</span>
             <span className="nav-count">{brandScore > 0 ? `${brandScore}%` : '新建'}</span>
+          </button>
+          <button
+            className={`nav-item brand-nav ${
+              nav.type === 'products' || nav.type === 'product' ? 'active' : ''
+            }`}
+            onClick={() => onNavigate({ type: 'products' })}
+          >
+            <Package size={16} />
+            <span className="nav-label">产品手册</span>
+            <span className="nav-count">{products.length || '新建'}</span>
           </button>
           <NavItem
             icon={LayoutGrid}
@@ -372,7 +384,9 @@ export default function Sidebar({
                 </span>
                 <span className="space-option-copy">
                   <strong>{space.name}</strong>
-                  <small>{space.assetCount || 0} 个素材</small>
+                  <small>
+                    {space.assetCount || 0} 个素材 · {space.productCount || 0} 个产品
+                  </small>
                 </span>
                 {space.id === library.activeSpaceId ? <Check size={13} /> : null}
               </button>

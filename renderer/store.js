@@ -42,6 +42,7 @@ export const useApp = create((set, get) => ({
     spaces: [],
     activeSpaceId: null,
     brand: null,
+    products: [],
     stats: { active: 0, trash: 0, bytes: 0, total: 0 },
     dataDir: ''
   },

@@ -12,6 +12,8 @@ const similar = require('./similar.cjs')
 const mediaProtocol = require('./media-protocol.cjs')
 const brandExport = require('./brand-export.cjs')
 const brandKitImport = require('./brand-kit-import.cjs')
+const productExport = require('./product-export.cjs')
+const productKitImport = require('./product-kit-import.cjs')
 
 function fail(message) {
   throw new Error(message)
@@ -205,6 +207,7 @@ function registerIpc() {
         )
         brand.updatedAt = now
       }
+      cleanProductAssetReferences(removeSet)
     } else {
       fail('未知的批量操作')
     }
@@ -264,6 +267,15 @@ function registerIpc() {
         asset.folderId = null
         asset.linkedFolderIds = []
         asset.updatedAt = now
+      }
+    }
+
+    for (const space of state.spaces) {
+      for (const product of space.products || []) {
+        if (product.folderId && descendants.has(product.folderId)) {
+          product.folderId = null
+          product.updatedAt = now
+        }
       }
     }
 
@@ -417,6 +429,102 @@ function registerIpc() {
 
   const COLOR_CATEGORIES = ['primary', 'secondary', 'accent', 'neutral', 'background', 'text']
   const FONT_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
+  const PRODUCT_STATUSES = ['concept', 'upcoming', 'active', 'archived']
+
+  function currentProducts() {
+    return store.getProducts()
+  }
+
+  function currentProduct(id) {
+    const product = store.getProduct(id)
+    if (!product) fail('产品不存在')
+    return product
+  }
+
+  function productText(value, max, label, required = false) {
+    if (typeof value !== 'string') fail(`${label}格式错误`)
+    const text = value.trim().slice(0, max)
+    if (required && !text) fail(`${label}不能为空`)
+    return text
+  }
+
+  function productFolderId(value) {
+    if (value == null || value === '') return null
+    const folder = store
+      .getState()
+      .folders.find((item) => item.id === value && item.spaceId === store.getActiveSpaceId())
+    if (!folder) fail('产品素材文件夹不存在')
+    return folder.id
+  }
+
+  function productTypefaceId(value) {
+    if (value == null || value === '') return null
+    if (!currentBrand().typography.some((typeface) => typeface.id === value)) {
+      fail('产品字体不存在')
+    }
+    return value
+  }
+
+  function applyProductFields(product, payload) {
+    if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+      product.name = productText(payload.name, 80, '产品名称', true)
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'tagline')) {
+      product.tagline = productText(payload.tagline, 160, '产品定位')
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'description')) {
+      product.description = productText(payload.description, 2000, '产品简介')
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'category')) {
+      product.category = productText(payload.category, 40, '产品分类')
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
+      product.status = PRODUCT_STATUSES.includes(payload.status) ? payload.status : 'concept'
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'launchDate')) {
+      const value = String(payload.launchDate || '')
+      if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) fail('上市日期格式无效')
+      product.launchDate = value
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'sku')) {
+      product.sku = productText(payload.sku, 60, '产品编号')
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'folderId')) {
+      product.folderId = productFolderId(payload.folderId)
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'usage')) {
+      product.usage = productText(payload.usage, 5000, '产品使用规范')
+    }
+    product.updatedAt = new Date().toISOString()
+    return product
+  }
+
+  function cleanProductTypefaceReferences(removedIds) {
+    if (!removedIds || !removedIds.size) return
+    const now = new Date().toISOString()
+    for (const space of store.getState().spaces) {
+      for (const product of space.products || []) {
+        const removedHeading = removedIds.has(product.headingTypefaceId)
+        const removedBody = removedIds.has(product.bodyTypefaceId)
+        if (removedHeading) product.headingTypefaceId = null
+        if (removedBody) product.bodyTypefaceId = null
+        if (removedHeading || removedBody) product.updatedAt = now
+      }
+    }
+  }
+
+  function cleanProductAssetReferences(removedIds) {
+    if (!removedIds || !removedIds.size) return
+    const now = new Date().toISOString()
+    for (const space of store.getState().spaces) {
+      for (const product of space.products || []) {
+        if (removedIds.has(product.logoAssetId)) {
+          product.logoAssetId = null
+          product.updatedAt = now
+        }
+      }
+    }
+  }
 
   function touchBrand() {
     const brand = currentBrand()
@@ -438,6 +546,7 @@ function registerIpc() {
         !removedIds.has(pairing.headingTypefaceId) &&
         !removedIds.has(pairing.bodyTypefaceId)
     )
+    cleanProductTypefaceReferences(removedIds)
   }
 
   ipcMain.handle('brand:update-profile', (_event, payload = {}) => {
@@ -643,6 +752,126 @@ function registerIpc() {
     return { ok: true }
   })
 
+  ipcMain.handle('product:create', (_event, payload = {}) => {
+    if (typeof payload.name !== 'string' || !payload.name.trim()) fail('产品名称不能为空')
+    const now = new Date().toISOString()
+    const product = {
+      id: crypto.randomUUID(),
+      name: '',
+      tagline: '',
+      description: '',
+      category: '',
+      status: 'concept',
+      launchDate: '',
+      sku: '',
+      logoAssetId: null,
+      logoLabel: '',
+      logoMinWidth: '',
+      logoClearSpace: '',
+      logoNote: '',
+      colors: [],
+      headingTypefaceId: null,
+      bodyTypefaceId: null,
+      folderId: null,
+      usage: '',
+      createdAt: now,
+      updatedAt: now
+    }
+    applyProductFields(product, payload)
+    currentProducts().push(product)
+    store.touch()
+    return product
+  })
+
+  ipcMain.handle('product:update', (_event, payload = {}) => {
+    const product = currentProduct(payload.id)
+    applyProductFields(product, payload)
+    store.touch()
+    return product
+  })
+
+  ipcMain.handle('product:delete', (_event, payload = {}) => {
+    const product = currentProduct(payload.id)
+    const space = store.getSpace()
+    space.products = (space.products || []).filter((item) => item.id !== product.id)
+    store.touch()
+    return { ok: true }
+  })
+
+  ipcMain.handle('product:save-logo', (_event, payload = {}) => {
+    const product = currentProduct(payload.productId)
+    const asset = store.getAsset(payload.assetId)
+    if (
+      !asset ||
+      asset.trashed ||
+      asset.spaceId !== store.getActiveSpaceId() ||
+      !['image', 'design', 'doc'].includes(asset.kind)
+    ) {
+      fail('请选择一个可用的图片或设计素材')
+    }
+    product.logoAssetId = asset.id
+    product.logoLabel = productText(payload.label || '', 80, 'Logo 名称')
+    product.logoMinWidth = productText(payload.minWidth || '', 60, '最小宽度')
+    product.logoClearSpace = productText(payload.clearSpace || '', 80, '安全边距')
+    product.logoNote = productText(payload.note || '', 500, 'Logo 说明')
+    product.updatedAt = new Date().toISOString()
+    store.touch()
+    return product
+  })
+
+  ipcMain.handle('product:remove-logo', (_event, payload = {}) => {
+    const product = currentProduct(payload.id)
+    product.logoAssetId = null
+    product.logoLabel = ''
+    product.logoMinWidth = ''
+    product.logoClearSpace = ''
+    product.logoNote = ''
+    product.updatedAt = new Date().toISOString()
+    store.touch()
+    return { ok: true }
+  })
+
+  ipcMain.handle('product:save-color', (_event, payload = {}) => {
+    const product = currentProduct(payload.productId)
+    const hex = typeof payload.hex === 'string' ? payload.hex.trim() : ''
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) fail('请输入有效的 HEX 颜色')
+    const item = {
+      id: payload.id || crypto.randomUUID(),
+      name: productText(payload.name || '产品色', 40, '颜色名称') || '产品色',
+      hex: hex.toUpperCase(),
+      pantone: productText(payload.pantone || '', 40, 'Pantone'),
+      category: COLOR_CATEGORIES.includes(payload.category) ? payload.category : 'primary',
+      usage: productText(payload.usage || '', 200, '颜色用途')
+    }
+    if (payload.id) {
+      const index = product.colors.findIndex((color) => color.id === payload.id)
+      if (index < 0) fail('产品色不存在')
+      product.colors[index] = item
+    } else {
+      product.colors.push(item)
+    }
+    product.updatedAt = new Date().toISOString()
+    store.touch()
+    return item
+  })
+
+  ipcMain.handle('product:remove-color', (_event, payload = {}) => {
+    const product = currentProduct(payload.productId)
+    product.colors = product.colors.filter((color) => color.id !== payload.colorId)
+    product.updatedAt = new Date().toISOString()
+    store.touch()
+    return { ok: true }
+  })
+
+  ipcMain.handle('product:update-typefaces', (_event, payload = {}) => {
+    const product = currentProduct(payload.productId)
+    product.headingTypefaceId = productTypefaceId(payload.headingTypefaceId)
+    product.bodyTypefaceId = productTypefaceId(payload.bodyTypefaceId)
+    product.updatedAt = new Date().toISOString()
+    store.touch()
+    return product
+  })
+
   ipcMain.handle('brand:import-kit', async (event, payload = {}) => {
     let sourceDir =
       typeof payload.sourceDir === 'string' ? path.resolve(payload.sourceDir) : null
@@ -682,6 +911,47 @@ function registerIpc() {
     brand.lastExportedAt = new Date().toISOString()
     touchBrand()
     return result
+  })
+
+  ipcMain.handle('product:export', async (event, payload = {}) => {
+    const product = currentProduct(payload.productId)
+    let destination = null
+    if (typeof payload.destination === 'string' && payload.destination) {
+      destination = path.resolve(payload.destination)
+      if (!fs.existsSync(destination) || !fs.statSync(destination).isDirectory()) {
+        fail('导出目录不存在')
+      }
+    } else {
+      const picked = await dialog.showOpenDialog(windowFor(event), {
+        title: '导出产品手册',
+        buttonLabel: '导出到这里',
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (picked.canceled || !picked.filePaths[0]) return null
+      destination = picked.filePaths[0]
+    }
+    return productExport.exportProductManual({
+      productId: product.id,
+      destination
+    })
+  })
+
+  ipcMain.handle('product:import', async (event, payload = {}) => {
+    let sourceDir =
+      typeof payload.sourceDir === 'string' ? path.resolve(payload.sourceDir) : null
+    if (!sourceDir) {
+      const picked = await dialog.showOpenDialog(windowFor(event), {
+        title: '导入产品手册',
+        buttonLabel: '导入产品手册',
+        properties: ['openDirectory']
+      })
+      if (picked.canceled || !picked.filePaths[0]) return null
+      sourceDir = picked.filePaths[0]
+    }
+    if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
+      fail('产品手册目录不存在')
+    }
+    return productKitImport.importProductManualFromDirectory(sourceDir)
   })
 
   ipcMain.handle('system:copy', (_event, payload = {}) => {
