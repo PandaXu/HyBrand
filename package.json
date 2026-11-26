@@ -1,0 +1,70 @@
+{
+  "name": "hybrand",
+  "productName": "HyBrand",
+  "version": "0.2.0",
+  "description": "HyBrand — 本地 AI 品牌资产工作台",
+  "author": "HyBrand",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build:vision": "mkdir -p resources/bin && swiftc -O -o resources/bin/hybrand-vision vision/HyBrandVision.swift && chmod +x resources/bin/hybrand-vision",
+    "build": "npm run build:vision && vite build",
+    "start": "electron .",
+    "icon": "node scripts/build-icon.mjs",
+    "dist": "npm run build && npm run icon && electron-builder --mac --arm64",
+    "test": "npm run build && node --test test/*.test.mjs && node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "1.80.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zustand": "5.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.3.0",
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.65.1",
+    "vite": "8.3.8"
+  },
+  "build": {
+    "appId": "com.hybrand.app",
+    "productName": "HyBrand",
+    "directories": {
+      "output": "dist-app"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "target": [
+        "dir",
+        "dmg"
+      ],
+      "icon": "resources/icon.icns",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSDesktopFolderUsageDescription": "HyBrand 需要读取你选择导入的素材文件。",
+        "NSDocumentsFolderUsageDescription": "HyBrand 需要读取你选择导入的素材文件。",
+        "NSDownloadsFolderUsageDescription": "HyBrand 需要读取你选择导入的素材文件。"
+      }
+    },
+    "dmg": {
+      "title": "HyBrand ${version}"
+    }
+  }
+}

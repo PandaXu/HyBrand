@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-app/
+test-artifacts/
+resources/bin/
+resources/icon.icns
+resources/icon.iconset/
+.DS_Store
+*.log
