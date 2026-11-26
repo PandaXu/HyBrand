@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import {
+  Check,
   ChevronDown,
   ChevronRight,
   Folder,
@@ -12,9 +13,12 @@ import {
   Settings,
   Sparkles,
   Star,
-  Trash2
+  Trash2,
+  Upload
 } from 'lucide-react'
 import { useApp } from '../store.js'
+import api from '../api.js'
+import { callApi } from '../actions.js'
 import { formatBytes } from '../utils.js'
 import { brandCompletion } from '../brand.js'
 import {
@@ -194,6 +198,30 @@ export default function Sidebar({
     .filter((folder) => !folder.parentId)
     .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
   const brandScore = brandCompletion(library.brand, library.assets).score
+  const spaces = library.spaces || []
+  const activeSpace =
+    spaces.find((space) => space.id === library.activeSpaceId) || spaces[0] || null
+  const [spaceMenu, setSpaceMenu] = useState(null)
+
+  function openSpaceMenu(event) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    setSpaceMenu({ x: Math.max(8, rect.left), y: rect.bottom + 6 })
+  }
+
+  async function switchSpace(spaceId) {
+    setSpaceMenu(null)
+    if (spaceId === useApp.getState().library.activeSpaceId) return
+    const result = await callApi(api.switchSpace(spaceId), '切换品牌空间失败')
+    if (result) useApp.getState().toast('已切换品牌空间', 'success')
+  }
+
+  async function importBrandKit() {
+    setSpaceMenu(null)
+    const result = await callApi(api.importBrandKit(), '导入品牌包失败')
+    if (!result) return
+    const warning = result.warnings?.length ? `，${result.warnings.length} 个文件缺失` : ''
+    useApp.getState().toast(`品牌包已导入为新空间「${result.name}」${warning}`, 'success')
+  }
 
   return (
     <aside className="sidebar">
@@ -205,6 +233,17 @@ export default function Sidebar({
             <span>本地品牌工作台</span>
           </div>
         </div>
+        <button className="space-switcher" onClick={openSpaceMenu} title="切换品牌空间">
+          <span className="space-switcher-avatar">
+            {(activeSpace?.name || '空').trim().slice(0, 1).toUpperCase()}
+          </span>
+          <span className="space-switcher-copy">
+            <span>品牌空间</span>
+            <strong>{activeSpace?.name || '默认空间'}</strong>
+          </span>
+          <span className="space-switcher-count">{activeSpace?.assetCount ?? 0}</span>
+          <ChevronDown size={13} />
+        </button>
       </div>
 
       <div className="sidebar-scroll">
@@ -313,6 +352,54 @@ export default function Sidebar({
           <Settings size={16} />
         </button>
       </div>
+
+      {spaceMenu ? (
+        <>
+          <div className="menu-backdrop" onClick={() => setSpaceMenu(null)} />
+          <div
+            className="floating-menu space-menu"
+            style={{ left: spaceMenu.x, top: spaceMenu.y }}
+          >
+            <div className="space-menu-label">品牌空间</div>
+            {spaces.map((space) => (
+              <button
+                key={space.id}
+                className={`space-option ${space.id === library.activeSpaceId ? 'active' : ''}`}
+                onClick={() => switchSpace(space.id)}
+              >
+                <span className="space-option-avatar">
+                  {space.name.trim().slice(0, 1).toUpperCase()}
+                </span>
+                <span className="space-option-copy">
+                  <strong>{space.name}</strong>
+                  <small>{space.assetCount || 0} 个素材</small>
+                </span>
+                {space.id === library.activeSpaceId ? <Check size={13} /> : null}
+              </button>
+            ))}
+            <div className="menu-separator" />
+            <button
+              onClick={() => {
+                setSpaceMenu(null)
+                useApp.getState().openDialog({ type: 'space-create' })
+              }}
+            >
+              <Plus size={14} /> 新建品牌空间
+            </button>
+            <button onClick={importBrandKit}>
+              <Upload size={14} /> 导入品牌包
+            </button>
+            <button
+              onClick={() => {
+                setSpaceMenu(null)
+                useApp.getState().openDialog({ type: 'settings' })
+              }}
+            >
+              <Settings size={14} /> 空间管理
+            </button>
+          </div>
+        </>
+      ) : null}
     </aside>
   )
 }

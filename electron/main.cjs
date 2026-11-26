@@ -119,6 +119,11 @@ function buildMenu() {
           click: () => sendMenuCommand('import')
         },
         {
+          label: '导入文件夹…',
+          accelerator: 'CmdOrCtrl+Shift+O',
+          click: () => sendMenuCommand('import-folder')
+        },
+        {
           label: '新建文件夹',
           accelerator: 'CmdOrCtrl+Shift+N',
           click: () => sendMenuCommand('new-folder')

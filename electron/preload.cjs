@@ -14,9 +14,11 @@ contextBridge.exposeInMainWorld('hybrand', {
   getPathForFile: (file) => webUtils.getPathForFile(file),
 
   pickAndImport: (folderId) => invoke('import:pick', { folderId }),
+  pickAndImportFolder: (folderId) => invoke('import:pick-folder', { folderId }),
   importPaths: (paths, folderId) => invoke('import:paths', { paths, folderId }),
 
   updateAsset: (id, patch) => invoke('asset:update', { id, patch }),
+  unlinkAssetFolder: (id, folderId) => invoke('asset:unlink-folder', { id, folderId }),
   batch: (ids, action, value) => invoke('assets:batch', { ids, action, value }),
   download: (id) => invoke('asset:download', { id }),
   reveal: (id) => invoke('asset:reveal', { id }),
@@ -37,6 +39,10 @@ contextBridge.exposeInMainWorld('hybrand', {
   rebuildPreviews: () => invoke('maintenance:rebuild-previews'),
   rebuildAI: () => invoke('maintenance:rebuild-ai'),
   revealDataDir: () => invoke('system:reveal-data'),
+  createSpace: (name) => invoke('space:create', { name }),
+  switchSpace: (id) => invoke('space:switch', { id }),
+  renameSpace: (id, name) => invoke('space:rename', { id, name }),
+  deleteSpace: (id) => invoke('space:delete', { id }),
   copyText: (text) => invoke('system:copy', { text }),
 
   updateBrandProfile: (patch) => invoke('brand:update-profile', patch),
@@ -46,7 +52,11 @@ contextBridge.exposeInMainWorld('hybrand', {
   removeBrandColor: (id) => invoke('brand:remove-color', { id }),
   saveBrandTypeface: (payload) => invoke('brand:save-typeface', payload),
   removeBrandTypeface: (id) => invoke('brand:remove-typeface', { id }),
+  updateBrandTypeScale: (payload) => invoke('brand:update-typescale', payload),
+  saveBrandPairing: (payload) => invoke('brand:save-pairing', payload),
+  removeBrandPairing: (id) => invoke('brand:remove-pairing', { id }),
   exportBrandKit: (destination) => invoke('brand:export', { destination }),
+  importBrandKit: (sourceDir) => invoke('brand:import-kit', { sourceDir }),
 
   onLibraryChanged: (callback) => subscribe('library:changed', callback),
   onMenuCommand: (callback) => subscribe('menu:command', callback)

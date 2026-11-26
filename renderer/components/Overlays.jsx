@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FolderOpen,
   FolderPlus,
+  FolderUp,
   Hash,
   Info,
   Music,
@@ -336,6 +337,17 @@ export function Toasts() {
             )}
           </span>
           <span className="toast-text">{toast.message}</span>
+          {toast.action ? (
+            <button
+              className="toast-action"
+              onClick={() => {
+                toast.action.onClick?.()
+                dismiss(toast.id)
+              }}
+            >
+              {toast.action.label}
+            </button>
+          ) : null}
           <button className="toast-close" onClick={() => dismiss(toast.id)}>
             <X size={13} />
           </button>
@@ -351,6 +363,7 @@ export function EmptyState({
   filtersActive,
   similar,
   onPickImport,
+  onPickFolder,
   onNewFolder,
   onClearFilters,
   onClearSearch,
@@ -445,6 +458,9 @@ export function EmptyState({
           <button className="primary-btn" onClick={onPickImport}>
             <Upload size={16} /> 上传文件
           </button>
+          <button className="secondary-btn" onClick={onPickFolder}>
+            <FolderUp size={16} /> 上传文件夹
+          </button>
         </div>
       </div>
     )
@@ -464,11 +480,14 @@ export function EmptyState({
         <button className="primary-btn" onClick={onPickImport}>
           <Upload size={16} /> 上传文件
         </button>
+        <button className="secondary-btn" onClick={onPickFolder}>
+          <FolderUp size={16} /> 上传文件夹
+        </button>
         <button className="secondary-btn" onClick={onNewFolder}>
           <FolderPlus size={16} /> 新建文件夹
         </button>
       </div>
-      <span className="drop-hint">也可以直接把文件拖进来 · 支持 90+ 格式</span>
+      <span className="drop-hint">也可以直接把文件或文件夹拖进来 · 支持 90+ 格式</span>
     </div>
   )
 }
@@ -504,8 +523,8 @@ export function DragOverlay() {
     <div className="drag-overlay">
       <div className="drag-card">
         <Upload size={26} />
-        <strong>松开以导入素材</strong>
-        <span>文件会复制到 HyBrand 本地素材库</span>
+        <strong>松开以导入素材或文件夹</strong>
+        <span>文件夹会保留目录结构，文件会复制到本地素材库</span>
       </div>
     </div>
   )

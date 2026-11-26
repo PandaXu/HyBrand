@@ -35,7 +35,9 @@ function invalidate(assetId) {
 function rank(reference, { excludeId = null, limit = 200 } = {}) {
   if (!reference || !reference.length) return []
   const results = []
+  const spaceId = store.getActiveSpaceId()
   for (const asset of store.getState().assets) {
+    if (asset.spaceId !== spaceId) continue
     if (asset.trashed || asset.id === excludeId || !asset.featurePath) continue
     const feature = featureFor(asset)
     if (!feature || feature.length !== reference.length) continue

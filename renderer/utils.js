@@ -308,17 +308,25 @@ export function deriveView({ library, nav, search, filters, similar, sort }) {
     trash: assets.length - active.length
   }
 
-  const countsByFolder = new Map()
   const folderById = new Map(folders.map((folder) => [folder.id, folder]))
+  const folderAssets = new Map()
   for (const asset of active) {
-    let folder = asset.folderId ? folderById.get(asset.folderId) : null
-    const guard = new Set()
-    while (folder && !guard.has(folder.id)) {
-      guard.add(folder.id)
-      countsByFolder.set(folder.id, (countsByFolder.get(folder.id) || 0) + 1)
-      folder = folder.parentId ? folderById.get(folder.parentId) : null
+    const memberships = new Set(asset.linkedFolderIds || [])
+    if (asset.folderId) memberships.add(asset.folderId)
+    for (const folderId of memberships) {
+      let folder = folderById.get(folderId)
+      const guard = new Set()
+      while (folder && !guard.has(folder.id)) {
+        guard.add(folder.id)
+        if (!folderAssets.has(folder.id)) folderAssets.set(folder.id, new Set())
+        folderAssets.get(folder.id).add(asset.id)
+        folder = folder.parentId ? folderById.get(folder.parentId) : null
+      }
     }
   }
+  const countsByFolder = new Map(
+    [...folderAssets.entries()].map(([id, ids]) => [id, ids.size])
+  )
 
   let base
   if (similar) {
@@ -332,7 +340,9 @@ export function deriveView({ library, nav, search, filters, similar, sort }) {
         (asset) =>
           asset &&
           !asset.trashed &&
-          (!scope || (asset.folderId && scope.has(asset.folderId)))
+          (!scope ||
+            (asset.folderId && scope.has(asset.folderId)) ||
+            (asset.linkedFolderIds || []).some((id) => scope.has(id)))
       )
   } else if (nav.type === 'trash') {
     base = assets.filter((asset) => asset.trashed)
@@ -341,7 +351,9 @@ export function deriveView({ library, nav, search, filters, similar, sort }) {
   } else if (nav.type === 'uncategorized') {
     base = active.filter((asset) => !asset.folderId)
   } else if (nav.type === 'folder') {
-    base = active.filter((asset) => asset.folderId === nav.id)
+    base = active.filter(
+      (asset) => asset.folderId === nav.id || (asset.linkedFolderIds || []).includes(nav.id)
+    )
   } else {
     base = active
   }

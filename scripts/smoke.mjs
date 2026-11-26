@@ -137,6 +137,36 @@ try {
   assert.equal(duplicate.duplicates, 3)
   console.log('✓ SHA-256 去重生效')
 
+  await page.evaluate(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.id = 'smoke-dup-input'
+    document.body.appendChild(input)
+  })
+  await page.setInputFiles('#smoke-dup-input', fixturePaths[0])
+  await page.evaluate(() => {
+    const input = document.querySelector('#smoke-dup-input')
+    const transfer = new DataTransfer()
+    transfer.items.add(input.files[0])
+    document
+      .querySelector('.content')
+      .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+  })
+  await page.getByRole('button', { name: '查看已有' }).click()
+  await page.waitForSelector('.modal-card')
+  assert.ok((await page.locator('.duplicate-row').count()) >= 1, '重复文件应提供快捷链接')
+  const existingLink = page.locator('.duplicate-file-link').first()
+  await existingLink.waitFor()
+  assert.ok((await existingLink.innerText()).trim().length > 0, '已有文件应显示可点击链接')
+  await page
+    .locator('.duplicate-file-actions')
+    .first()
+    .getByRole('button', { name: '在 Finder 中显示' })
+    .waitFor()
+  await page.getByRole('button', { name: '知道了' }).click()
+  await page.waitForSelector('.modal-card', { state: 'detached' })
+  console.log('✓ 重复文件提供已有文件快捷链接')
+
   await page.waitForFunction(
     () => {
       const images = [...document.querySelectorAll('.asset-card img')]
@@ -415,15 +445,39 @@ try {
 
   // ---------- Brand space (Phase 1) ----------
 
-  const fontCandidates = [
-    '/System/Library/Fonts/Supplemental/Arial.ttf',
-    '/System/Library/Fonts/Helvetica.ttc'
-  ]
-  const fontPath = fontCandidates.find((file) => fs.existsSync(file))
-  if (fontPath) {
-    const beforeFont = (await snapshot(page)).assets.length
-    await page.evaluate((file) => window.hybrand.importPaths([file], null), fontPath)
-    await waitForReadyCount(page, beforeFont + 1, 60000)
+  const fontDefs = [
+    {
+      path: '/System/Library/Fonts/Supplemental/Arial.ttf',
+      file: 'Arial.ttf',
+      family: '品牌无衬线',
+      name: 'Regular',
+      role: 'body',
+      weight: 400
+    },
+    {
+      path: '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
+      file: 'Arial Bold.ttf',
+      family: '品牌无衬线',
+      name: 'Bold',
+      role: 'heading',
+      weight: 700
+    },
+    {
+      path: '/System/Library/Fonts/Supplemental/Times New Roman.ttf',
+      file: 'Times New Roman.ttf',
+      family: '品牌衬线',
+      name: 'Serif',
+      role: 'brand',
+      weight: 400
+    }
+  ].filter((font) => fs.existsSync(font.path))
+  if (fontDefs.length) {
+    const beforeFonts = (await snapshot(page)).assets.length
+    await page.evaluate(
+      (paths) => window.hybrand.importPaths(paths, null),
+      fontDefs.map((font) => font.path)
+    )
+    await waitForReadyCount(page, beforeFonts + fontDefs.length, 60000)
   }
 
   const brandSidebar = page.locator('.sidebar')
@@ -456,18 +510,23 @@ try {
 
   await page.locator('.colors-card .card-head button[title="添加品牌色"]').click()
   await page.waitForSelector('.modal-card')
+  assert.ok((await page.locator('.palette-pick').count()) > 0, '颜色弹窗应从素材色板取色')
+  assert.ok((await page.locator('.contrast-line').count()) > 0, '颜色弹窗应显示对比度')
   await page.fill('input[name="brand-color-name"]', '主色')
+  await page.selectOption('select[name="color-category"]', 'secondary')
+  await page.fill('input[name="color-usage"]', '辅助按钮与标签')
   await page.fill('input[name="color-hex"]', '#FF5C8A')
   await page.getByRole('button', { name: '保存品牌色' }).click()
   await page.waitForSelector('.modal-card', { state: 'detached' })
 
-  if (fontPath) {
+  for (const font of fontDefs) {
     await page.locator('.type-card .card-head button[title="添加字体"]').click()
     await page.waitForSelector('.modal-card')
-    await page
-      .locator('.typeface-option', { hasText: path.basename(fontPath) })
-      .click()
-    await page.fill('input[name="typeface-name"]', '品牌字体')
+    await page.locator('.typeface-option', { hasText: font.file }).click()
+    await page.fill('input[name="typeface-family"]', font.family)
+    await page.fill('input[name="typeface-name"]', font.name)
+    await page.selectOption('select[name="typeface-role"]', font.role)
+    await page.selectOption('select[name="typeface-weight"]', String(font.weight))
     await page.getByRole('button', { name: '保存字体' }).click()
     await page.waitForSelector('.modal-card', { state: 'detached' })
   }
@@ -477,7 +536,7 @@ try {
     return state.brand.name === '测试品牌' &&
       state.brand.logoVariants.length &&
       state.brand.colors.length &&
-      (!fontPath || state.brand.typography.length)
+      (!fontDefs.length || state.brand.typography.length === fontDefs.length)
       ? state
       : null
   }, 15000)
@@ -492,7 +551,68 @@ try {
   )
   assert.ok(score > 0, '品牌完整度应随补齐规范提升')
 
-  if (fontPath) {
+  if (fontDefs.length) {
+    await page.waitForSelector('.font-family-card')
+    await page.waitForTimeout(300)
+    const regular = brandSnapshot.brand.typography.find((item) => item.name === 'Regular')
+    const bold = brandSnapshot.brand.typography.find((item) => item.name === 'Bold')
+    const serif = brandSnapshot.brand.typography.find((item) => item.name === 'Serif')
+    assert.ok(regular && bold && serif, '应建立三个字体样式')
+    assert.ok((await page.locator('.font-family-card').count()) >= 2, '字体应按家族分组')
+    assert.equal(await page.locator('.typeface-row').count(), fontDefs.length)
+
+    await page.getByRole('button', { name: '编辑字阶' }).click()
+    await page.waitForSelector('.modal-card')
+    assert.equal(await page.locator('.scale-step-row').count(), 6)
+    await page.fill('input[name="type-scale-base"]', '16')
+    await page.fill('input[name="type-scale-ratio"]', '1.25')
+    for (const key of ['display', 'h1', 'h2', 'h3']) {
+      await page.selectOption(`select[name="scale-step-${key}"]`, bold.id)
+    }
+    for (const key of ['body', 'caption']) {
+      await page.selectOption(`select[name="scale-step-${key}"]`, regular.id)
+    }
+    await page.getByRole('button', { name: '保存字体系统' }).click()
+    await page.waitForSelector('.modal-card', { state: 'detached' })
+    await waitFor(async () => {
+      const state = await snapshot(page)
+      return (
+        state.brand.typeScale?.steps?.display?.typefaceId === bold.id &&
+        state.brand.typeScale?.steps?.body?.typefaceId === regular.id
+      )
+    }, 10000)
+    assert.equal(await page.locator('.scale-row').count(), 6)
+
+    async function addPairing(name, headingId, bodyId, note) {
+      await page
+        .locator('.type-subhead', { hasText: '字体搭配' })
+        .getByRole('button', { name: '添加搭配' })
+        .click()
+      await page.waitForSelector('.modal-card')
+      await page.fill('input[name="pairing-name"]', name)
+      await page.selectOption('select[name="pairing-heading"]', headingId)
+      await page.selectOption('select[name="pairing-body"]', bodyId)
+      await page.fill('[name="pairing-note"]', note)
+      await page.getByRole('button', { name: '保存搭配' }).click()
+      await page.waitForSelector('.modal-card', { state: 'detached' })
+    }
+
+    await addPairing('官网主搭配', bold.id, regular.id, '标题使用品牌标题字，正文使用品牌正文字体。')
+    await addPairing('编辑风格', serif.id, regular.id, '活动页可以使用衬线标题与无衬线正文。')
+    await waitFor(async () => (await snapshot(page)).brand.pairings.length === 2, 10000)
+    await page.waitForFunction(
+      () => document.querySelectorAll('.pairing-card').length === 2,
+      null,
+      { timeout: 5000 }
+    )
+
+    await page.waitForSelector('.toasts', { state: 'detached', timeout: 7000 }).catch(() => {})
+    await page.locator('.type-card').scrollIntoViewIfNeeded()
+    await page.waitForTimeout(300)
+    await page.screenshot({ path: path.join(artifacts, '19-typography.png') })
+  }
+
+  if (fontDefs.length) {
     await page.waitForSelector('.typeface-sample')
     await page.waitForTimeout(900)
     const fontAsset = brandSnapshot.assets.find((asset) => asset.kind === 'font')
@@ -522,17 +642,233 @@ try {
   assert.ok(fs.existsSync(path.join(exported.path, 'index.html')), '品牌包应包含 index.html')
   assert.ok(fs.existsSync(path.join(exported.path, 'brand.json')), '品牌包应包含 brand.json')
   assert.ok(fs.readdirSync(path.join(exported.path, 'logos')).length >= 1, '品牌包应包含 Logo 文件')
-  if (fontPath) {
+  if (fontDefs.length) {
     assert.ok(fs.readdirSync(path.join(exported.path, 'fonts')).length >= 1, '品牌包应包含字体文件')
   }
   const exportedHtml = fs.readFileSync(path.join(exported.path, 'index.html'), 'utf8')
   assert.ok(exportedHtml.includes('测试品牌'), '品牌包 HTML 应包含品牌名称')
   assert.ok(exportedHtml.includes('#FF5C8A'), '品牌包 HTML 应包含品牌色')
+  assert.ok(exportedHtml.includes('辅助按钮与标签'), '品牌包 HTML 应包含颜色用途')
+  assert.ok(exportedHtml.includes('字阶'), '品牌包 HTML 应包含字阶')
+  assert.ok(exportedHtml.includes('字体搭配'), '品牌包 HTML 应包含字体搭配')
+  assert.ok(exportedHtml.includes('品牌无衬线'), '品牌包 HTML 应包含字体家族')
+  assert.ok(exportedHtml.includes('品牌衬线'), '品牌包 HTML 应包含第二个字体家族')
+  assert.ok(exportedHtml.includes('标题使用品牌标题字'), '品牌包 HTML 应包含搭配说明')
+  assert.ok(exportedHtml.includes('活动页可以使用衬线标题'), '品牌包 HTML 应包含第二组搭配')
   fs.rmSync(exportDir, { recursive: true, force: true })
 
   await brandSidebar.getByRole('button', { name: /全部素材/ }).click()
   await page.waitForSelector('.grid-view .asset-card')
   console.log('✓ 品牌空间、Logo/品牌色/字体、完整度与品牌包导出正常')
+
+  await page.locator('.create-wrap .primary-btn').click()
+  await page.waitForSelector('.create-menu')
+  await page.locator('.create-menu').getByRole('button', { name: /上传文件夹/ }).waitFor()
+  await page.mouse.click(8, 8)
+  await page.waitForSelector('.create-menu', { state: 'detached' })
+
+  const folderRoot = path.join(fixtures, '项目素材')
+  fs.mkdirSync(path.join(folderRoot, 'Logo'), { recursive: true })
+  fs.writeFileSync(path.join(folderRoot, '说明.txt'), '项目素材说明')
+  fs.writeFileSync(path.join(folderRoot, 'Logo', '品牌 Logo 说明.txt'), 'Logo 文件说明')
+  const beforeFolder = (await snapshot(page)).assets.length
+  const folderImport = await page.evaluate(
+    (folder) => window.hybrand.importPaths([folder], null),
+    folderRoot
+  )
+  assert.equal(folderImport.added, 2, '文件夹内文件应全部导入')
+  assert.equal(folderImport.foldersCreated, 2, '应创建根文件夹和子文件夹')
+  const folderState = await waitForReadyCount(page, beforeFolder + 2, 60000)
+  const folderRootRecord = folderState.folders.find((folder) => folder.name === '项目素材')
+  const logoFolder = folderState.folders.find(
+    (folder) => folder.name === 'Logo' && folder.parentId === folderRootRecord?.id
+  )
+  assert.ok(folderRootRecord && logoFolder, '应保留本地目录结构')
+  const noteAsset = folderState.assets.find((asset) => asset.name === '说明.txt')
+  const logoNoteAsset = folderState.assets.find((asset) => asset.name === '品牌 Logo 说明.txt')
+  assert.equal(noteAsset?.folderId, folderRootRecord.id)
+  assert.equal(logoNoteAsset?.folderId, logoFolder.id)
+  await page.locator('.folder-card', { hasText: '项目素材' }).click()
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: path.join(artifacts, '20-folder-import.png') })
+  await brandSidebar.getByRole('button', { name: /全部素材/ }).click()
+  console.log('✓ 文件夹上传与目录结构保留正常')
+
+  await page.locator('.folder-row', { hasText: '项目素材' }).click()
+  await page.waitForSelector('.grid-view .asset-card')
+  const shortcutBefore = await snapshot(page)
+  const shortcutFile = fixturePaths.find((file) => {
+    const asset = shortcutBefore.assets.find((item) => item.name === path.basename(file))
+    return asset && !asset.trashed && asset.folderId !== folderRootRecord.id
+  })
+  assert.ok(shortcutFile, '应有一个不在目标文件夹内的重复文件用于创建快捷链接')
+  const shortcutAsset = shortcutBefore.assets.find(
+    (item) => item.name === path.basename(shortcutFile)
+  )
+
+  await page.evaluate(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.id = 'smoke-shortcut-input'
+    document.body.appendChild(input)
+  })
+  await page.setInputFiles('#smoke-shortcut-input', shortcutFile)
+  await page.evaluate(() => {
+    const input = document.querySelector('#smoke-shortcut-input')
+    const transfer = new DataTransfer()
+    transfer.items.add(input.files[0])
+    document
+      .querySelector('.content')
+      .dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }))
+  })
+  await waitFor(async () => {
+    const state = await snapshot(page)
+    const asset = state.assets.find((item) => item.id === shortcutAsset.id)
+    return asset?.linkedFolderIds?.includes(folderRootRecord.id)
+  }, 10000)
+  const shortcutAfter = await snapshot(page)
+  assert.equal(shortcutAfter.stats.total, shortcutBefore.stats.total, '快捷链接不应新增素材或占用存储')
+  await page.waitForSelector('.shortcut-badge')
+  await page.screenshot({ path: path.join(artifacts, '22-folder-shortcut.png') })
+  console.log('✓ 重复文件在当前文件夹显示快捷链接')
+
+  const linkedCard = page
+    .locator('.asset-card')
+    .filter({ has: page.locator('.shortcut-badge') })
+    .first()
+  await linkedCard.hover()
+  await linkedCard.locator('button[title="更多"]').click()
+  await page.getByRole('button', { name: '移除快捷链接' }).click()
+  await waitFor(async () => {
+    const state = await snapshot(page)
+    const asset = state.assets.find((item) => item.id === shortcutAsset.id)
+    return asset && !asset.linkedFolderIds.includes(folderRootRecord.id)
+  })
+  await page.waitForFunction(() => !document.querySelector('.shortcut-badge'))
+  assert.ok(
+    (await snapshot(page)).assets.some((item) => item.id === shortcutAsset.id),
+    '移除快捷链接不应删除源素材'
+  )
+  await brandSidebar.getByRole('button', { name: /全部素材/ }).click()
+  console.log('✓ 快捷链接可单独移除，源素材保留')
+
+  const firstSpaceState = await snapshot(page)
+  assert.equal(firstSpaceState.spaces.length, 1, '初始应只有一个品牌空间')
+  const firstSpaceId = firstSpaceState.activeSpaceId
+  const firstSpaceName = firstSpaceState.spaces[0].name
+  const firstBrandName = firstSpaceState.brand.name
+  const firstAssetTotal = firstSpaceState.stats.total
+
+  await page.locator('.space-switcher').click()
+  await page.waitForSelector('.space-menu')
+  await page.screenshot({ path: path.join(artifacts, '21-space-menu.png') })
+  await page.locator('.space-menu').getByRole('button', { name: /新建品牌空间/ }).click()
+  await page.waitForSelector('.modal-card')
+  await page.fill('input[name="space-name"]', '第二品牌')
+  await page.getByRole('button', { name: '创建空间' }).click()
+  await page.waitForSelector('.modal-card', { state: 'detached' })
+  const secondSpaceState = await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.activeSpaceId !== firstSpaceId ? state : null
+  }, 10000)
+  assert.equal(secondSpaceState.spaces.length, 2)
+  assert.equal(secondSpaceState.stats.total, 0, '新空间应为空')
+  assert.equal(secondSpaceState.brand.name, '第二品牌')
+  const secondSpaceId = secondSpaceState.activeSpaceId
+  assert.equal(
+    secondSpaceState.spaces.find((space) => space.id === secondSpaceId).assetCount,
+    0
+  )
+
+  const secondFile = path.join(fixtures, '第二空间素材.txt')
+  fs.writeFileSync(secondFile, '第二个品牌空间的素材')
+  const secondImport = await page.evaluate(
+    (file) => window.hybrand.importPaths([file], null),
+    secondFile
+  )
+  assert.equal(secondImport.added, 1)
+  await waitForReadyCount(page, 1, 60000)
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: path.join(artifacts, '22-second-space.png') })
+
+  await page.locator('.space-switcher').click()
+  await page.waitForSelector('.space-menu')
+  await page.locator('.space-menu .space-option', { hasText: firstSpaceName }).click()
+  const backState = await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.activeSpaceId === firstSpaceId ? state : null
+  }, 10000)
+  await page.waitForFunction(
+    (name) => document.querySelector('.space-switcher-copy strong')?.textContent === name,
+    firstSpaceName,
+    { timeout: 5000 }
+  )
+  assert.equal(backState.brand.name, firstBrandName)
+  assert.equal(backState.stats.total, firstAssetTotal, '切回后原空间数据应完整')
+  assert.equal(
+    backState.spaces.find((space) => space.id === secondSpaceId).assetCount,
+    1,
+    '第二个空间应保留自己的素材'
+  )
+
+  await page.locator('.space-switcher').click()
+  await page.waitForSelector('.space-menu')
+  await page.locator('.space-menu .space-option', { hasText: '第二品牌' }).click()
+  await waitFor(async () => (await snapshot(page)).activeSpaceId === secondSpaceId, 10000)
+  await page.waitForFunction(
+    () => document.querySelector('.space-switcher-copy strong')?.textContent === '第二品牌',
+    null,
+    { timeout: 5000 }
+  )
+  await page.locator('.sidebar-footer').getByTitle('设置').click()
+  await page.waitForSelector('.modal-card')
+  await page.fill('input[name="space-name-input"]', '第二品牌改')
+  await page.getByRole('button', { name: '保存名称' }).click()
+  await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.spaces.find((space) => space.id === secondSpaceId)?.name === '第二品牌改'
+  }, 10000)
+  await page.getByRole('button', { name: '删除当前品牌空间' }).click()
+  await page.waitForSelector('.modal-card')
+  await page.getByRole('button', { name: '删除空间' }).click()
+  await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.spaces.length === 1 && state.activeSpaceId === firstSpaceId
+  }, 10000)
+  const finalSpaceState = await snapshot(page)
+  assert.equal(finalSpaceState.spaces.length, 1)
+  assert.equal(finalSpaceState.brand.name, firstBrandName)
+  assert.equal(finalSpaceState.stats.total, firstAssetTotal, '删除空间不应影响原空间')
+  console.log('✓ 多品牌空间创建、切换、数据隔离、重命名与删除正常')
+
+  const kitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hybrand-kit-'))
+  const kit = await page.evaluate(
+    (destination) => window.hybrand.exportBrandKit(destination),
+    kitDir
+  )
+  assert.ok(kit?.path, '应能导出用于导入测试的品牌包')
+  const importedKit = await page.evaluate(
+    (directory) => window.hybrand.importBrandKit(directory),
+    kit.path
+  )
+  assert.ok(importedKit?.spaceId, '品牌包应导入为新空间')
+  const kitState = await waitFor(async () => {
+    const state = await snapshot(page)
+    return state.activeSpaceId === importedKit.spaceId ? state : null
+  }, 15000)
+  assert.equal(kitState.spaces.length, 2)
+  assert.equal(kitState.brand.name, firstBrandName)
+  assert.equal(kitState.brand.colors[0]?.hex, '#FF5C8A')
+  assert.ok(kitState.brand.logoVariants.length >= 1)
+  assert.ok(kitState.brand.typography.length >= 3)
+  assert.equal(kitState.brand.pairings.length, 2)
+  const importedBold = kitState.brand.typography.find((item) => item.name === 'Bold')
+  assert.ok(importedBold, '导入后应保留 Bold 字体样式')
+  assert.equal(kitState.brand.typeScale.steps.display.typefaceId, importedBold.id)
+  await page.evaluate((id) => window.hybrand.deleteSpace(id), importedKit.spaceId)
+  await waitFor(async () => (await snapshot(page)).activeSpaceId === firstSpaceId, 10000)
+  fs.rmSync(kitDir, { recursive: true, force: true })
+  console.log('✓ 品牌包导入为新空间、规范与字体映射正常')
 
   assert.deepEqual(errors, [], `渲染进程不应有错误：\n${errors.join('\n')}`)
   console.log('\nHyBrand 冒烟测试全部通过')
@@ -544,14 +880,15 @@ try {
   process.exitCode = 1
 } finally {
   if (app) {
-    await app.evaluate(({ app }) => app.quit()).catch(() => {})
-    await new Promise((resolve) => setTimeout(resolve, 200))
+    const child = app.process()
+    await app.evaluate(({ app }) => app.exit(0)).catch(() => {})
     await app.close().catch(() => {})
     try {
-      app.process()?.kill('SIGTERM')
+      if (child && child.exitCode === null) child.kill('SIGKILL')
     } catch {
       // 进程已退出
     }
+    await new Promise((resolve) => setTimeout(resolve, 300))
   }
   if (!failed) {
     fs.rmSync(dataDir, { recursive: true, force: true })

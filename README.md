@@ -4,9 +4,13 @@ HyBrand 是面向品牌 / 设计团队的**本地优先 AI 品牌资产工作台
 
 核心方向：**品牌工作的确定性——找得到、用得对、交得出、数据守得住。**
 
-当前版本：**v0.2.0（Local / Phase 1）**。
+当前版本：**v0.6.2（Local / Phase 1）**。
 
 ![品牌手册](docs/screenshot.png)
+
+![字体与色彩系统](docs/typography.png)
+
+![多品牌空间](docs/spaces.png)
 
 ## 产品方向：一套核心，三种交付
 
@@ -23,22 +27,27 @@ HyBrand 不是三个产品，而是同一套品牌核心的三种形态：
 
 当前 Local 版已落地“品牌空间 + 规范块 + 完整度 + 品牌包导出”；后续 SaaS / 私有化路线见 [ROADMAP.md](ROADMAP.md)。
 
-## 当前能力（Local v0.2.0）
+## 当前能力（Local v0.6.2）
 
 ### 品牌空间（Phase 1 新增）
 
+- **多品牌空间**：侧栏切换；支持创建、重命名、删除；每个空间拥有独立的素材库、文件夹、标签、回收站和品牌手册
 - **品牌首页**：Bento 布局的品牌空间，展示品牌名称、定位、简介、主 Logo、完整度
 - **Logo 规范块**：主 Logo / 反白 / 单色 / 横版 / 竖版 / 图标；支持最小宽度、安全边距、使用说明
-- **品牌色**：名称、HEX、RGB、HSL、CMYK、Pantone；一键复制 HEX
-- **字体规范块**：品牌字体 / 标题字体 / 正文字体；本地 `@font-face` 样张预览、使用说明
+- **品牌色**：角色（主色 / 辅助 / 强调 / 中性 / 背景 / 文字）、使用场景、HEX / RGB / HSL / CMYK / Pantone、全格式一键复制、WCAG 对比度检查、从素材色板取色
+- **字体规范块**：多字体家族分组，同一家族支持多个字重/样式；本地 `@font-face` 样张、字体文件下载
+- **字体系统**：基准字号 × 比例生成 6 级字阶；每一级可单独指定字体与字重；支持多套标题 / 正文搭配规则
 - **品牌语气**：可持续编辑的品牌表达原则
 - **品牌完整度**：必填 / 建议项检查 + **Brand Coach** 本地建议（缺反白 Logo、缺 SVG、品牌色不足等）
 - **品牌包导出**：生成 `index.html` 品牌手册 + `brand.json` + `logos/` + `fonts/`，完全离线、可直接分享
+- **品牌包导入**：选择 HyBrand 导出的品牌包文件夹，自动创建新品牌空间，并恢复 Logo、颜色、字体、字阶与字体搭配
 - **素材概览**：品牌相关素材数量与最近素材入口
 
 ### 素材库与本地 AI
 
-- 拖拽 / 文件选择导入，SHA-256 去重；图片、视频、音频、PDF、PSD/AI/Sketch、3D、字体等
+- 拖拽 / 文件选择 / 文件夹上传；文件夹保留本地目录结构，同名文件夹自动合并
+- SHA-256 去重；重复文件会在当前文件夹自动生成快捷链接（不复制、不占用额外存储），可直接打开源文件 / 在 Finder 中显示，也可单独移除链接
+- 图片、视频、音频、PDF、PSD/AI/Sketch、3D、字体等
 - QuickLook / ImageIO 缩略图，HEIC、PDF、视频封面可显示真实画面
 - macOS Vision 本地 AI：自动标签、相似素材、以图搜图；零模型下载、零上传
 - 网格 / 自适应 / 瀑布流 / 列表四种视图，缩略图尺寸调节
@@ -70,7 +79,7 @@ npm run dist           # 生成 dist-app/mac-arm64/HyBrand.app 与 .dmg
 构建产物：
 
 - `dist-app/mac-arm64/HyBrand.app`
-- `dist-app/HyBrand-0.2.0-arm64.dmg`
+- `dist-app/HyBrand-0.6.2-arm64.dmg`
 
 应用为本地 ad-hoc 签名；如 Gatekeeper 拦截，请在 Finder 中右键选择「打开」。
 
@@ -85,7 +94,7 @@ npm run dist           # 生成 dist-app/mac-arm64/HyBrand.app 与 .dmg
 └─ session/            # Chromium 会话缓存
 ```
 
-品牌空间数据存放在 `library.json` 的 `brand` 字段：Logo 变体、品牌色、字体角色、语气与完整度依据。  
+品牌空间数据存放在 `library.json` 的 `spaces[]` 字段：每个空间拥有独立的 Logo 变体、品牌色、字体角色、语气与完整度依据。  
 备份时退出应用后复制整个 `HyBrand` 目录即可。测试可用 `HYBRAND_DATA_DIR=/path/to/tmp` 隔离数据。
 
 ## 快捷键
@@ -94,6 +103,7 @@ npm run dist           # 生成 dist-app/mac-arm64/HyBrand.app 与 .dmg
 | --- | --- |
 | `⌘K` | 聚焦搜索；品牌页内返回素材库并聚焦搜索 |
 | `⌘O` | 导入文件 |
+| `⌘⇧O` | 上传文件夹 |
 | `⌘⇧N` | 新建文件夹 |
 | `⌘,` | 设置 |
 | `Space` / `Enter` | 全屏预览选中素材 |
@@ -113,7 +123,7 @@ npm run dist           # 生成 dist-app/mac-arm64/HyBrand.app 与 .dmg
 
 ## 当前边界
 
-Local v0.2 不包含多人协作、分享链接、角色权限、SSO、版本历史、看板视图、批量重命名、云端同步、对话式语义搜索。  
+Local v0.6.2 不包含多人协作、分享链接、角色权限、SSO、版本历史、看板视图、批量重命名、云端同步、对话式语义搜索。  
 这些能力属于后续 SaaS / 私有化阶段，或者需要额外模型；路线与架构前置原则见 [ROADMAP.md](ROADMAP.md)。
 
 ## 说明

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Check,
+  ExternalLink,
   Folder,
   HardDrive,
   Loader2,
@@ -11,7 +12,7 @@ import {
 import { useApp } from '../store.js'
 import api from '../api.js'
 import { callApi, toast } from '../actions.js'
-import { flatFolders, formatBytes } from '../utils.js'
+import { folderPath, flatFolders, formatBytes } from '../utils.js'
 
 export function Modal({ children, onClose, width = 420 }) {
   return (
@@ -260,13 +261,176 @@ function BatchTagDialog({ dialog, onClose }) {
   )
 }
 
+function DuplicatesDialog({ dialog, onClose }) {
+  const library = useApp((state) => state.library)
+  const items = Array.isArray(dialog.items) ? dialog.items : []
+  const linkedCount = items.filter((item) => item.linked).length
+
+  async function openExisting(item) {
+    if (!item.assetId) return
+    const result = await callApi(api.openExternal(item.assetId), '无法打开已有文件')
+    if (result?.error) toast('没有可用的默认应用打开该文件', 'error')
+  }
+
+  function revealExisting(item) {
+    if (!item.assetId) return
+    callApi(api.reveal(item.assetId), '无法在 Finder 中显示')
+  }
+
+  return (
+    <Modal onClose={onClose} width={540}>
+      <div className="modal-head">
+        <h2>检测到重复文件</h2>
+        <button className="icon-btn" onClick={onClose}>
+          <X size={16} />
+        </button>
+      </div>
+      <p className="modal-message">
+        以下文件已存在于当前品牌空间。
+        {linkedCount
+          ? `已在当前目录创建 ${linkedCount} 个快捷链接，不会重复占用存储。`
+          : '已跳过导入。'}
+        可以直接打开已有素材，或关闭后继续使用。
+      </p>
+      <div className="duplicate-list">
+        {items.map((item, index) => {
+          const asset = library.assets.find((entry) => entry.id === item.assetId)
+          const folder = asset?.folderId
+            ? library.folders.find((entry) => entry.id === asset.folderId)
+            : null
+          const location = asset?.trashed
+            ? '回收站'
+            : folder
+              ? folderPath(library.folders, folder.id)
+                  .map((entry) => entry.name)
+                  .join(' / ')
+              : '未分类'
+          return (
+            <div className="duplicate-row" key={`${item.assetId || 'missing'}-${index}`}>
+              <div className="duplicate-copy">
+                <button
+                  className="duplicate-file-link"
+                  onClick={() => openExisting(item)}
+                  disabled={!asset}
+                  title="打开已有文件"
+                >
+                  <ExternalLink size={12} />
+                  <span>{asset?.name || '素材不可用'}</span>
+                </button>
+                <span>
+                  位置：{location} · 新文件：{item.name}
+                  {item.linked ? ' · 已创建快捷链接' : ''}
+                </span>
+                <span className="duplicate-file-actions">
+                  <button onClick={() => openExisting(item)} disabled={!asset}>
+                    打开文件
+                  </button>
+                  <button onClick={() => revealExisting(item)} disabled={!asset}>
+                    在 Finder 中显示
+                  </button>
+                </span>
+              </div>
+            </div>
+          )
+        })}
+        {!items.length ? <p className="muted">没有可显示的重复文件。</p> : null}
+      </div>
+      <div className="modal-actions">
+        <button className="primary-btn" onClick={onClose}>
+          知道了
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function SpaceCreateDialog({ onClose }) {
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(event) {
+    event.preventDefault()
+    const value = name.trim()
+    if (!value || busy) return
+    setBusy(true)
+    const result = await callApi(api.createSpace(value), '创建品牌空间失败')
+    setBusy(false)
+    if (result) {
+      toast('品牌空间已创建', 'success')
+      onClose()
+    }
+  }
+
+  return (
+    <Modal onClose={onClose} width={380}>
+      <form onSubmit={submit}>
+        <div className="modal-head">
+          <h2>新建品牌空间</h2>
+          <button type="button" className="icon-btn" onClick={onClose}>
+            <X size={16} />
+          </button>
+        </div>
+        <p className="modal-message">
+          每个品牌空间拥有独立的素材库、文件夹和品牌手册，数据仍保存在本机。
+        </p>
+        <input
+          className="modal-input"
+          name="space-name"
+          autoFocus
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="例如：主品牌 / 客户 A"
+          maxLength={80}
+          spellCheck={false}
+        />
+        <div className="modal-actions">
+          <button type="button" className="secondary-btn" onClick={onClose}>
+            取消
+          </button>
+          <button type="submit" className="primary-btn" disabled={!name.trim() || busy}>
+            {busy ? <Loader2 size={15} className="spin" /> : null}
+            创建空间
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function SettingsModal({ onClose }) {
   const library = useApp((state) => state.library)
   const [info, setInfo] = useState(null)
+  const activeSpace =
+    (library.spaces || []).find((space) => space.id === library.activeSpaceId) ||
+    (library.spaces || [])[0] ||
+    null
+  const [spaceName, setSpaceName] = useState(activeSpace?.name || '')
 
   useEffect(() => {
     api.appInfo().then(setInfo).catch(() => {})
   }, [])
+
+  async function renameSpace() {
+    const value = spaceName.trim()
+    if (!activeSpace || !value || value === activeSpace.name) return
+    const result = await callApi(api.renameSpace(activeSpace.id, value), '重命名品牌空间失败')
+    if (result) toast('品牌空间已重命名', 'success')
+  }
+
+  function requestDeleteSpace() {
+    if (!activeSpace || (library.spaces || []).length <= 1) return
+    useApp.getState().openDialog({
+      type: 'confirm',
+      title: '删除品牌空间',
+      message: `将永久删除「${activeSpace.name}」及其 ${library.stats.total} 个素材和文件，此操作不可撤销。`,
+      confirmLabel: '删除空间',
+      danger: true,
+      onConfirm: async () => {
+        const result = await callApi(api.deleteSpace(activeSpace.id), '删除品牌空间失败')
+        if (result) toast('品牌空间已删除', 'success')
+      }
+    })
+  }
 
   async function rebuildPreviews() {
     const result = await callApi(api.rebuildPreviews(), '重建缩略图失败')
@@ -291,9 +455,45 @@ function SettingsModal({ onClose }) {
         <div className="brand-mark">H</div>
         <div>
           <strong>HyBrand</strong>
-          <span>版本 {info?.version || '0.2.0'} · 本地 AI 品牌资产工作台</span>
+          <span>版本 {info?.version || '0.6.1'} · 本地 AI 品牌资产工作台</span>
         </div>
       </div>
+
+      {activeSpace ? (
+        <div className="settings-block">
+          <h3>品牌空间</h3>
+          <div className="space-settings-row">
+            <input
+              className="modal-input"
+              name="space-name-input"
+              value={spaceName}
+              onChange={(event) => setSpaceName(event.target.value)}
+              maxLength={80}
+            />
+            <button
+              className="secondary-btn"
+              onClick={renameSpace}
+              disabled={!spaceName.trim() || spaceName.trim() === activeSpace.name}
+            >
+              保存名称
+            </button>
+          </div>
+          <div className="settings-stats">
+            <span>{(library.spaces || []).length} 个品牌空间</span>
+            <span>当前 {library.stats.total} 个素材</span>
+          </div>
+          <button
+            className="text-danger"
+            onClick={requestDeleteSpace}
+            disabled={(library.spaces || []).length <= 1}
+          >
+            删除当前品牌空间
+          </button>
+          {(library.spaces || []).length <= 1 ? (
+            <p className="section-note">至少保留一个品牌空间；新建后即可切换。</p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="settings-block">
         <h3>数据存储</h3>
@@ -351,6 +551,12 @@ export default function Dialogs() {
   }
   if (dialog.type === 'batch-tag') {
     return <BatchTagDialog dialog={dialog} onClose={closeDialog} />
+  }
+  if (dialog.type === 'duplicates') {
+    return <DuplicatesDialog dialog={dialog} onClose={closeDialog} />
+  }
+  if (dialog.type === 'space-create') {
+    return <SpaceCreateDialog onClose={closeDialog} />
   }
   if (dialog.type === 'settings') {
     return <SettingsModal onClose={closeDialog} />

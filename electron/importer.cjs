@@ -54,44 +54,100 @@ function withinDataDir(filePath) {
   return resolved === root || resolved.startsWith(`${root}${path.sep}`)
 }
 
-async function collectFiles(inputPaths) {
-  const result = []
-  const seen = new Set()
+function safeFolderName(value) {
+  return (
+    String(value || '导入文件夹')
+      .replace(/[\u0000-\u001f]/g, '')
+      .slice(0, 120) || '导入文件夹'
+  )
+}
 
-  async function walk(target, depth) {
+function ensureImportFolder(state, name, parentId, counters, spaceId) {
+  const folderName = safeFolderName(name)
+  const normalizedParent = parentId || null
+  const existing = state.folders.find(
+    (folder) =>
+      folder.spaceId === spaceId &&
+      (folder.parentId || null) === normalizedParent &&
+      folder.name === folderName
+  )
+  if (existing) return existing.id
+
+  const folder = {
+    id: crypto.randomUUID(),
+    name: folderName,
+    parentId: normalizedParent,
+    spaceId,
+    createdAt: new Date().toISOString()
+  }
+  state.folders.push(folder)
+  counters.created += 1
+  return folder.id
+}
+
+/**
+ * 将拖入 / 选择的路径转换为“文件 + 目标文件夹”列表。
+ * - 文件：导入到 targetFolderId
+ * - 文件夹：在 targetFolderId 下创建同名文件夹，递归保留目录结构
+ * - 同名文件夹复用，避免重复导入同一项目时产生副本
+ */
+async function buildImportPlan(inputPaths, targetFolderId, spaceId) {
+  const state = store.getState()
+  const entries = []
+  const seen = new Set()
+  const counters = { created: 0 }
+
+  function addFile(filePath, folderId) {
+    const resolved = path.resolve(filePath)
+    if (withinDataDir(resolved) || seen.has(resolved)) return
+    seen.add(resolved)
+    entries.push({ file: resolved, folderId })
+    if (entries.length > 5000) throw new Error('单次最多导入 5000 个文件')
+  }
+
+  async function walk(directory, folderId, depth) {
     if (depth > 12) return
-    let stat
+    let children = []
     try {
-      stat = await fsp.lstat(target)
+      children = await fsp.readdir(directory, { withFileTypes: true })
     } catch {
       return
     }
-    if (stat.isSymbolicLink()) return
-    if (stat.isDirectory()) {
-      const base = path.basename(target)
-      if (base.startsWith('.') || base.toLowerCase().endsWith('.app')) return
-      let entries = []
-      try {
-        entries = await fsp.readdir(target, { withFileTypes: true })
-      } catch {
-        return
+    for (const child of children) {
+      if (child.name.startsWith('.') || child.isSymbolicLink()) continue
+      const full = path.join(directory, child.name)
+      if (child.isDirectory()) {
+        if (child.name.toLowerCase().endsWith('.app')) continue
+        const childFolderId = ensureImportFolder(state, child.name, folderId, counters, spaceId)
+        await walk(full, childFolderId, depth + 1)
+      } else if (child.isFile()) {
+        addFile(full, folderId)
       }
-      for (const entry of entries) {
-        if (entry.name.startsWith('.')) continue
-        await walk(path.join(target, entry.name), depth + 1)
-      }
-      return
     }
-    if (!stat.isFile()) return
-    const resolved = path.resolve(target)
-    if (withinDataDir(resolved) || seen.has(resolved)) return
-    seen.add(resolved)
-    result.push(resolved)
-    if (result.length > 5000) throw new Error('单次最多导入 5000 个文件')
   }
 
-  for (const input of inputPaths) await walk(input, 0)
-  return result
+  for (const input of inputPaths) {
+    const resolved = path.resolve(input)
+    if (withinDataDir(resolved)) continue
+    let stat
+    try {
+      stat = await fsp.lstat(resolved)
+    } catch {
+      continue
+    }
+    if (stat.isSymbolicLink()) continue
+    if (stat.isDirectory()) {
+      const base = path.basename(resolved)
+      if (base.toLowerCase().endsWith('.app')) continue
+      const rootFolderId = ensureImportFolder(state, base, targetFolderId, counters, spaceId)
+      await walk(resolved, rootFolderId, 0)
+    } else if (stat.isFile()) {
+      addFile(resolved, targetFolderId)
+    }
+  }
+
+  if (counters.created > 0) store.touch()
+  return { entries, foldersCreated: counters.created }
 }
 
 function sha256File(filePath) {
@@ -116,22 +172,66 @@ async function doImport(inputPaths, folderId) {
   const cleanPaths = (Array.isArray(inputPaths) ? inputPaths : [])
     .filter((item) => typeof item === 'string' && item.length > 0 && item.length < 4096)
     .slice(0, 1000)
-  if (!cleanPaths.length) return { added: 0, duplicates: 0, errors: 0, total: 0 }
+  if (!cleanPaths.length) {
+    return {
+      added: 0,
+      duplicates: 0,
+      linked: 0,
+      errors: 0,
+      total: 0,
+      foldersCreated: 0,
+      items: [],
+      duplicateItems: []
+    }
+  }
 
   const state = store.getState()
+  const spaceId = store.getActiveSpaceId()
   const targetFolder =
-    folderId && state.folders.some((folder) => folder.id === folderId) ? folderId : null
-  const files = await collectFiles(cleanPaths)
-  const knownHashes = new Set(state.assets.map((asset) => asset.hash))
+    folderId &&
+    state.folders.some((folder) => folder.id === folderId && folder.spaceId === spaceId)
+      ? folderId
+      : null
+  const { entries, foldersCreated } = await buildImportPlan(cleanPaths, targetFolder, spaceId)
+  const spaceAssets = state.assets.filter((asset) => asset.spaceId === spaceId)
+  const hashToAsset = new Map(spaceAssets.map((asset) => [asset.hash, asset]))
   const addedIds = []
+  const addedItems = []
+  const duplicateItems = []
   let duplicates = 0
+  let linked = 0
   let errors = 0
 
-  for (const file of files) {
+  for (const entry of entries) {
+    const file = entry.file
     try {
       const hash = await sha256File(file)
-      if (knownHashes.has(hash)) {
+      const existing = hashToAsset.get(hash)
+      if (existing) {
         duplicates += 1
+        const linkFolderId = entry.folderId || null
+        let linkedNow = false
+        if (
+          linkFolderId &&
+          !existing.trashed &&
+          existing.folderId !== linkFolderId &&
+          !existing.linkedFolderIds.includes(linkFolderId)
+        ) {
+          existing.linkedFolderIds.push(linkFolderId)
+          existing.updatedAt = new Date().toISOString()
+          linkedNow = true
+          linked += 1
+        }
+        if (duplicateItems.length < 100) {
+          duplicateItems.push({
+            name: path.basename(file),
+            assetId: existing.id,
+            folderId: existing.folderId || null,
+            trashed: Boolean(existing.trashed),
+            linked: linkedNow,
+            linkedFolderId: linkedNow ? linkFolderId : null
+          })
+        }
         continue
       }
       const stat = await fsp.stat(file)
@@ -153,7 +253,9 @@ async function doImport(inputPaths, folderId) {
         aspect: null,
         duration: null,
         hash,
-        folderId: targetFolder,
+        folderId: entry.folderId || null,
+        linkedFolderIds: [],
+        spaceId,
         note: '',
         tags: [],
         aiTags: [],
@@ -167,8 +269,9 @@ async function doImport(inputPaths, folderId) {
         status: 'processing',
         comments: []
       })
-      knownHashes.add(hash)
+      hashToAsset.set(hash, state.assets[state.assets.length - 1])
       addedIds.push(id)
+      addedItems.push({ id, sourcePath: file, name: path.basename(file) })
       store.touch()
     } catch (error) {
       console.error('[HyBrand] 导入失败', file, error)
@@ -177,9 +280,18 @@ async function doImport(inputPaths, folderId) {
   }
 
   for (const id of addedIds) enqueue(id)
-  if (addedIds.length) store.touch()
+  if (addedIds.length || foldersCreated || linked) store.touch()
 
-  return { added: addedIds.length, duplicates, errors, total: files.length }
+  return {
+    added: addedIds.length,
+    duplicates,
+    linked,
+    errors,
+    total: entries.length,
+    foldersCreated,
+    items: addedItems,
+    duplicateItems
+  }
 }
 
 const queue = []
@@ -375,7 +487,10 @@ function reanalyze(id) {
 }
 
 function rebuildPreviews() {
-  const assets = store.getState().assets.filter((asset) => !asset.trashed)
+  const spaceId = store.getActiveSpaceId()
+  const assets = store
+    .getState()
+    .assets.filter((asset) => !asset.trashed && asset.spaceId === spaceId)
   for (const asset of assets) {
     asset.status = 'processing'
     enqueue(asset.id)
@@ -394,9 +509,10 @@ function recoverPending() {
 
 function rebuildAITags() {
   const kinds = new Set(['image', 'video', 'design', 'doc'])
-  const assets = store.getState().assets.filter(
-    (asset) => !asset.trashed && kinds.has(asset.kind)
-  )
+  const spaceId = store.getActiveSpaceId()
+  const assets = store
+    .getState()
+    .assets.filter((asset) => !asset.trashed && asset.spaceId === spaceId && kinds.has(asset.kind))
   for (const asset of assets) {
     asset.status = 'processing'
     enqueue(asset.id)

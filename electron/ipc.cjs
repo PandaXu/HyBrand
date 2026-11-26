@@ -11,6 +11,7 @@ const vision = require('./vision.cjs')
 const similar = require('./similar.cjs')
 const mediaProtocol = require('./media-protocol.cjs')
 const brandExport = require('./brand-export.cjs')
+const brandKitImport = require('./brand-kit-import.cjs')
 
 function fail(message) {
   throw new Error(message)
@@ -73,15 +74,35 @@ function registerIpc() {
     return importer.importPaths(result.filePaths, payload.folderId)
   })
 
+  ipcMain.handle('import:pick-folder', async (event, payload = {}) => {
+    const picked = await dialog.showOpenDialog(windowFor(event), {
+      title: '上传文件夹',
+      buttonLabel: '上传文件夹',
+      properties: ['openDirectory', 'multiSelections']
+    })
+    if (picked.canceled || !picked.filePaths.length) return null
+    return importer.importPaths(picked.filePaths, payload.folderId)
+  })
+
   ipcMain.handle('import:paths', async (_event, payload = {}) => {
     const paths = Array.isArray(payload.paths) ? payload.paths.slice(0, 1000) : []
-    if (!paths.length) return { added: 0, duplicates: 0, errors: 0, total: 0 }
+    if (!paths.length) {
+      return {
+        added: 0,
+        duplicates: 0,
+        errors: 0,
+        total: 0,
+        foldersCreated: 0,
+        items: [],
+        duplicateItems: []
+      }
+    }
     return importer.importPaths(paths, payload.folderId)
   })
 
   ipcMain.handle('asset:update', (_event, payload = {}) => {
     const asset = store.getAsset(payload.id)
-    if (!asset) fail('素材不存在')
+    if (!asset || asset.spaceId !== store.getActiveSpaceId()) fail('素材不存在')
     const patch = payload.patch || {}
 
     if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
@@ -93,6 +114,7 @@ function registerIpc() {
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'folderId')) {
       asset.folderId = validFolderId(patch.folderId)
+      asset.linkedFolderIds = asset.linkedFolderIds.filter((id) => id !== asset.folderId)
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'tags')) {
       asset.tags = cleanTags(patch.tags)
@@ -106,11 +128,26 @@ function registerIpc() {
     return { ok: true }
   })
 
+  ipcMain.handle('asset:unlink-folder', (_event, payload = {}) => {
+    const asset = store.getAsset(payload.id)
+    if (!asset || asset.spaceId !== store.getActiveSpaceId()) fail('素材不存在')
+    const folderId = validFolderId(payload.folderId)
+    if (!folderId) fail('文件夹不存在')
+    if (!asset.linkedFolderIds.includes(folderId)) fail('快捷链接不存在')
+    asset.linkedFolderIds = asset.linkedFolderIds.filter((id) => id !== folderId)
+    asset.updatedAt = new Date().toISOString()
+    store.touch()
+    return { ok: true }
+  })
+
   ipcMain.handle('assets:batch', async (_event, payload = {}) => {
     const ids = idsFrom(payload.ids)
     const action = payload.action
     const state = store.getState()
-    const targets = state.assets.filter((asset) => ids.includes(asset.id))
+    const spaceId = store.getActiveSpaceId()
+    const targets = state.assets.filter(
+      (asset) => ids.includes(asset.id) && asset.spaceId === spaceId
+    )
     const now = new Date().toISOString()
     let removedIds = []
 
@@ -118,6 +155,7 @@ function registerIpc() {
       const folderId = validFolderId(payload.value)
       for (const asset of targets) {
         asset.folderId = folderId
+        asset.linkedFolderIds = asset.linkedFolderIds.filter((id) => id !== folderId)
         asset.updatedAt = now
       }
     } else if (action === 'favorite' || action === 'unfavorite') {
@@ -150,14 +188,22 @@ function registerIpc() {
       const removeSet = new Set(targets.map((asset) => asset.id))
       removedIds = [...removeSet]
       state.assets = state.assets.filter((asset) => !removeSet.has(asset.id))
-      if (state.brand) {
-        state.brand.logoVariants = state.brand.logoVariants.filter(
+      const brand = store.getBrand()
+      if (brand) {
+        brand.logoVariants = brand.logoVariants.filter(
           (variant) => !removeSet.has(variant.assetId)
         )
-        state.brand.typography = state.brand.typography.filter(
+        const removedTypefaces = brand.typography.filter((typeface) =>
+          removeSet.has(typeface.assetId)
+        )
+        brand.typography = brand.typography.filter(
           (typeface) => !removeSet.has(typeface.assetId)
         )
-        state.brand.updatedAt = now
+        cleanTypefaceReferences(
+          brand,
+          new Set(removedTypefaces.map((typeface) => typeface.id))
+        )
+        brand.updatedAt = now
       }
     } else {
       fail('未知的批量操作')
@@ -174,6 +220,7 @@ function registerIpc() {
       id: crypto.randomUUID(),
       name,
       parentId,
+      spaceId: store.getActiveSpaceId(),
       createdAt: new Date().toISOString()
     }
     store.getState().folders.push(folder)
@@ -182,7 +229,11 @@ function registerIpc() {
   })
 
   ipcMain.handle('folder:rename', (_event, payload = {}) => {
-    const folder = store.getState().folders.find((item) => item.id === payload.id)
+    const folder = store
+      .getState()
+      .folders.find(
+        (item) => item.id === payload.id && item.spaceId === store.getActiveSpaceId()
+      )
     if (!folder) fail('文件夹不存在')
     folder.name = cleanName(payload.name, 60)
     store.touch()
@@ -190,7 +241,11 @@ function registerIpc() {
   })
 
   ipcMain.handle('folder:delete', (_event, payload = {}) => {
-    const folder = store.getState().folders.find((item) => item.id === payload.id)
+    const folder = store
+      .getState()
+      .folders.find(
+        (item) => item.id === payload.id && item.spaceId === store.getActiveSpaceId()
+      )
     if (!folder) fail('文件夹不存在')
     const state = store.getState()
     const descendants = store.folderDescendants(folder.id)
@@ -198,10 +253,16 @@ function registerIpc() {
     let trashed = 0
 
     for (const asset of state.assets) {
+      const nextLinks = asset.linkedFolderIds.filter((id) => !descendants.has(id))
+      if (nextLinks.length !== asset.linkedFolderIds.length) {
+        asset.linkedFolderIds = nextLinks
+        asset.updatedAt = now
+      }
       if (asset.folderId && descendants.has(asset.folderId)) {
         if (!asset.trashed) trashed += 1
         asset.trashed = true
         asset.folderId = null
+        asset.linkedFolderIds = []
         asset.updatedAt = now
       }
     }
@@ -214,7 +275,7 @@ function registerIpc() {
 
   ipcMain.handle('comments:add', (_event, payload = {}) => {
     const asset = store.getAsset(payload.assetId)
-    if (!asset) fail('素材不存在')
+    if (!asset || asset.spaceId !== store.getActiveSpaceId()) fail('素材不存在')
     if (typeof payload.text !== 'string') fail('评论内容无效')
     const text = payload.text.trim()
     if (!text) fail('评论不能为空')
@@ -233,7 +294,7 @@ function registerIpc() {
 
   ipcMain.handle('comments:delete', (_event, payload = {}) => {
     const asset = store.getAsset(payload.assetId)
-    if (!asset) fail('素材不存在')
+    if (!asset || asset.spaceId !== store.getActiveSpaceId()) fail('素材不存在')
     asset.comments = asset.comments.filter((comment) => comment.id !== payload.commentId)
     asset.updatedAt = new Date().toISOString()
     store.touch()
@@ -242,7 +303,7 @@ function registerIpc() {
 
   ipcMain.handle('assets:similar', (_event, payload = {}) => {
     const asset = store.getAsset(payload.id)
-    if (!asset) fail('素材不存在')
+    if (!asset || asset.spaceId !== store.getActiveSpaceId()) fail('素材不存在')
     const feature = similar.featureForAsset(asset.id)
     if (!feature) return { referenceId: asset.id, results: [] }
     return {
@@ -344,7 +405,7 @@ function registerIpc() {
   // ---------- Brand space ----------
 
   function currentBrand() {
-    const brand = store.getState().brand
+    const brand = store.getBrand()
     if (!brand) fail('品牌数据不可用')
     return brand
   }
@@ -354,6 +415,9 @@ function registerIpc() {
     return value.trim().slice(0, max)
   }
 
+  const COLOR_CATEGORIES = ['primary', 'secondary', 'accent', 'neutral', 'background', 'text']
+  const FONT_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900]
+
   function touchBrand() {
     const brand = currentBrand()
     brand.updatedAt = new Date().toISOString()
@@ -361,10 +425,33 @@ function registerIpc() {
     return brand
   }
 
+  function cleanTypefaceReferences(brand, removedIds) {
+    if (!removedIds || !removedIds.size) return
+    const steps = brand.typeScale?.steps || {}
+    for (const key of Object.keys(steps)) {
+      if (steps[key] && removedIds.has(steps[key].typefaceId)) {
+        steps[key].typefaceId = null
+      }
+    }
+    brand.pairings = (brand.pairings || []).filter(
+      (pairing) =>
+        !removedIds.has(pairing.headingTypefaceId) &&
+        !removedIds.has(pairing.bodyTypefaceId)
+    )
+  }
+
   ipcMain.handle('brand:update-profile', (_event, payload = {}) => {
     const brand = currentBrand()
+    const space = store.getSpace()
+    const previousName = brand.name
     if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
       brand.name = cleanBrandText(payload.name, 80, '品牌名称')
+      if (
+        brand.name &&
+        (space.name === previousName || space.name === '我的品牌' || !space.name)
+      ) {
+        space.name = brand.name
+      }
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'tagline')) {
       brand.tagline = cleanBrandText(payload.tagline, 160, '品牌定位')
@@ -420,7 +507,9 @@ function registerIpc() {
       id: payload.id || crypto.randomUUID(),
       name: cleanBrandText(payload.name || '品牌色', 40, '颜色名称') || '品牌色',
       hex: hex.toUpperCase(),
-      pantone: cleanBrandText(payload.pantone || '', 40, 'Pantone')
+      pantone: cleanBrandText(payload.pantone || '', 40, 'Pantone'),
+      category: COLOR_CATEGORIES.includes(payload.category) ? payload.category : 'primary',
+      usage: cleanBrandText(payload.usage || '', 200, '颜色用途')
     }
     if (payload.id) {
       const index = brand.colors.findIndex((color) => color.id === payload.id)
@@ -445,25 +534,39 @@ function registerIpc() {
     const asset = store.getAsset(payload.assetId)
     if (!asset || asset.trashed) fail('请选择一个可用字体文件')
     if (asset.kind !== 'font') fail('请选择一个字体文件')
+    const existing = payload.id
+      ? brand.typography.find((typeface) => typeface.id === payload.id)
+      : null
+    if (payload.id && !existing) fail('字体不存在')
     const roles = ['brand', 'heading', 'body']
+    const fallbackName = asset.name.replace(/\.[^.]+$/, '')
     const item = {
       id: payload.id || crypto.randomUUID(),
       assetId: asset.id,
       role: roles.includes(payload.role) ? payload.role : 'brand',
-      name: cleanBrandText(
-        payload.name || asset.name.replace(/\.[^.]+$/, ''),
-        80,
-        '字体名称'
-      ),
+      family:
+        cleanBrandText(
+          payload.family || existing?.family || payload.name || fallbackName,
+          80,
+          '字体家族'
+        ) || '品牌字体',
+      name: cleanBrandText(payload.name || fallbackName, 80, '字体名称'),
       note: cleanBrandText(payload.note || '', 500, '字体说明'),
-      sample: cleanBrandText(payload.sample || '', 200, '字体示例')
+      sample: cleanBrandText(payload.sample || '', 200, '字体示例'),
+      weight: FONT_WEIGHTS.includes(Number(payload.weight)) ? Number(payload.weight) : 400
     }
+    const isFirstFont = !payload.id && brand.typography.length === 0
     if (payload.id) {
       const index = brand.typography.findIndex((typeface) => typeface.id === payload.id)
-      if (index < 0) fail('字体不存在')
       brand.typography[index] = item
     } else {
       brand.typography.push(item)
+    }
+    if (isFirstFont) {
+      const steps = brand.typeScale?.steps || {}
+      for (const key of Object.keys(steps)) {
+        if (!steps[key]?.typefaceId) steps[key] = { typefaceId: item.id }
+      }
     }
     touchBrand()
     return item
@@ -472,8 +575,90 @@ function registerIpc() {
   ipcMain.handle('brand:remove-typeface', (_event, payload = {}) => {
     const brand = currentBrand()
     brand.typography = brand.typography.filter((typeface) => typeface.id !== payload.id)
+    cleanTypefaceReferences(brand, new Set([payload.id]))
     touchBrand()
     return { ok: true }
+  })
+
+  ipcMain.handle('brand:update-typescale', (_event, payload = {}) => {
+    const brand = currentBrand()
+    const base = Number(payload.base)
+    const ratio = Number(payload.ratio)
+    if (!Number.isFinite(base)) fail('基准字号无效')
+    if (!Number.isFinite(ratio)) fail('字阶比例无效')
+    const typefaceIds = new Set(brand.typography.map((typeface) => typeface.id))
+    const sourceSteps =
+      payload.steps && typeof payload.steps === 'object'
+        ? payload.steps
+        : brand.typeScale?.steps || {}
+    const steps = {}
+    for (const key of ['display', 'h1', 'h2', 'h3', 'body', 'caption']) {
+      const id = sourceSteps[key]?.typefaceId
+      steps[key] = { typefaceId: typefaceIds.has(id) ? id : null }
+    }
+    brand.typeScale = {
+      base: Math.round(Math.min(24, Math.max(10, base)) * 100) / 100,
+      ratio: Math.round(Math.min(1.6, Math.max(1.05, ratio)) * 100) / 100,
+      steps
+    }
+    touchBrand()
+    return { ok: true }
+  })
+
+  ipcMain.handle('brand:save-pairing', (_event, payload = {}) => {
+    const brand = currentBrand()
+    const headingTypefaceId =
+      typeof payload.headingTypefaceId === 'string' ? payload.headingTypefaceId : null
+    const bodyTypefaceId =
+      typeof payload.bodyTypefaceId === 'string' ? payload.bodyTypefaceId : null
+    if (
+      !brand.typography.some((typeface) => typeface.id === headingTypefaceId) ||
+      !brand.typography.some((typeface) => typeface.id === bodyTypefaceId)
+    ) {
+      fail('请先选择标题字体和正文字体')
+    }
+    const item = {
+      id: payload.id || crypto.randomUUID(),
+      name:
+        cleanBrandText(payload.name || '字体搭配', 80, '搭配名称') || '字体搭配',
+      headingTypefaceId,
+      bodyTypefaceId,
+      note: cleanBrandText(payload.note || '', 1000, '搭配说明')
+    }
+    if (payload.id) {
+      const index = brand.pairings.findIndex((pairing) => pairing.id === payload.id)
+      if (index < 0) fail('字体搭配不存在')
+      brand.pairings[index] = item
+    } else {
+      brand.pairings.push(item)
+    }
+    touchBrand()
+    return item
+  })
+
+  ipcMain.handle('brand:remove-pairing', (_event, payload = {}) => {
+    const brand = currentBrand()
+    brand.pairings = brand.pairings.filter((pairing) => pairing.id !== payload.id)
+    touchBrand()
+    return { ok: true }
+  })
+
+  ipcMain.handle('brand:import-kit', async (event, payload = {}) => {
+    let sourceDir =
+      typeof payload.sourceDir === 'string' ? path.resolve(payload.sourceDir) : null
+    if (!sourceDir) {
+      const picked = await dialog.showOpenDialog(windowFor(event), {
+        title: '导入品牌包',
+        buttonLabel: '导入品牌包',
+        properties: ['openDirectory']
+      })
+      if (picked.canceled || !picked.filePaths[0]) return null
+      sourceDir = picked.filePaths[0]
+    }
+    if (!fs.existsSync(sourceDir) || !fs.statSync(sourceDir).isDirectory()) {
+      fail('品牌包目录不存在')
+    }
+    return brandKitImport.importBrandKitFromDirectory(sourceDir)
   })
 
   ipcMain.handle('brand:export', async (event, payload = {}) => {
@@ -502,6 +687,39 @@ function registerIpc() {
   ipcMain.handle('system:copy', (_event, payload = {}) => {
     clipboard.writeText(String(payload.text || '').slice(0, 20000))
     return true
+  })
+
+
+  ipcMain.handle('space:create', (_event, payload = {}) => {
+    const name = cleanName(payload.name, 80)
+    const space = store.createSpace(name)
+    return { ok: true, spaceId: space.id }
+  })
+
+  ipcMain.handle('space:switch', (_event, payload = {}) => {
+    if (!store.switchSpace(payload.id)) fail('品牌空间不存在')
+    return { ok: true }
+  })
+
+  ipcMain.handle('space:rename', (_event, payload = {}) => {
+    const name = cleanName(payload.name, 80)
+    const space = store.renameSpace(payload.id, name)
+    if (!space) fail('品牌空间不存在')
+    return { ok: true }
+  })
+
+  ipcMain.handle('space:delete', async (_event, payload = {}) => {
+    const space = store.getSpaces().find((item) => item.id === payload.id)
+    if (!space) fail('品牌空间不存在')
+    if (store.getSpaces().length <= 1) fail('至少保留一个品牌空间')
+    const assets = store.getState().assets.filter((asset) => asset.spaceId === space.id)
+    await Promise.all(assets.map((asset) => importer.removeAssetFiles(asset)))
+    const result = store.deleteSpace(space.id)
+    return {
+      ok: true,
+      removedAssets: result?.removedAssets.length || 0,
+      activeSpaceId: result?.activeSpaceId || store.getActiveSpaceId()
+    }
   })
 
   ipcMain.handle('system:reveal-data', async () => {

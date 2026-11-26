@@ -8,6 +8,7 @@ import {
   Film,
   FolderOpen,
   Image as ImageIcon,
+  Link2,
   Loader2,
   MoreHorizontal,
   Music,
@@ -42,11 +43,21 @@ function kindIcon(kind, size = 22) {
   return <FileText {...props} />
 }
 
-function CardMenu({ position, asset, isTrash, onClose, actions }) {
+function CardMenu({ position, asset, isTrash, linked, onClose, actions }) {
   return (
     <>
       <div className="menu-backdrop" onClick={onClose} />
       <div className="floating-menu card-menu" style={{ left: position.x, top: position.y }}>
+        {linked ? (
+          <button
+            onClick={() => {
+              onClose()
+              actions.onUnlink(asset)
+            }}
+          >
+            <Link2 size={14} /> 移除快捷链接
+          </button>
+        ) : null}
         <button
           onClick={() => {
             onClose()
@@ -107,6 +118,7 @@ function AssetCard({
   onOpen,
   actions,
   isTrash,
+  linked,
   style
 }) {
   const src = cardImage(asset)
@@ -202,6 +214,11 @@ function AssetCard({
             </button>
           </div>
 
+          {linked ? (
+            <span className="shortcut-badge" title="此素材是当前文件夹的快捷链接">
+              <Link2 size={10} /> 快捷链接
+            </span>
+          ) : null}
           <span className="format-badge">{extLabel(asset)}</span>
           {asset.duration ? (
             <span className="duration-badge">{formatDuration(asset.duration)}</span>
@@ -226,6 +243,7 @@ function AssetCard({
           position={menu}
           asset={asset}
           isTrash={isTrash}
+          linked={linked}
           onClose={() => setMenu(null)}
           actions={actions}
         />
@@ -243,7 +261,8 @@ function ListRow({
   onCheck,
   onOpen,
   actions,
-  isTrash
+  isTrash,
+  linked
 }) {
   const src = cardImage(asset)
   const [failed, setFailed] = useState(false)
@@ -290,6 +309,11 @@ function ListRow({
 
       <div className="list-name">
         <strong>{asset.name}</strong>
+        {linked ? (
+          <span className="shortcut-chip">
+            <Link2 size={10} /> 快捷链接
+          </span>
+        ) : null}
         {asset.note ? <span>{asset.note}</span> : null}
       </div>
       <span className="list-kind">{KIND_LABELS[asset.kind] || '素材'}</span>
@@ -308,6 +332,18 @@ function ListRow({
         >
           <Star size={14} fill={asset.favorite ? 'currentColor' : 'none'} />
         </button>
+        {linked ? (
+          <button
+            className="icon-btn tiny"
+            onClick={(event) => {
+              event.stopPropagation()
+              actions.onUnlink(asset)
+            }}
+            title="移除快捷链接"
+          >
+            <Link2 size={14} />
+          </button>
+        ) : null}
         {isTrash ? (
           <button
             className="icon-btn tiny"
@@ -406,10 +442,21 @@ export default function AssetViews({
   onOpenExternal,
   onTrash,
   onRestore,
-  isTrash
+  onUnlink,
+  isTrash,
+  linkedIds
 }) {
   const selectionSet = useMemo(() => new Set(selection), [selection])
-  const actions = { onFavorite, onSimilar, onDownload, onReveal, onOpenExternal, onTrash, onRestore }
+  const actions = {
+    onFavorite,
+    onSimilar,
+    onDownload,
+    onReveal,
+    onOpenExternal,
+    onTrash,
+    onRestore,
+    onUnlink
+  }
   const containerRef = useRef(null)
   const containerWidth = useContainerWidth(containerRef, viewMode === 'adaptive')
   const masonryRef = useRef(null)
@@ -440,6 +487,7 @@ export default function AssetViews({
             onOpen={onOpen}
             actions={actions}
             isTrash={isTrash}
+            linked={linkedIds.has(asset.id)}
           />
         ))}
       </div>
@@ -464,6 +512,7 @@ export default function AssetViews({
                 onOpen={onOpen}
                 actions={actions}
                 isTrash={isTrash}
+                linked={linkedIds.has(asset.id)}
                 style={{ width: Math.max(60, aspectOf(asset) * row.height) }}
               />
             ))}
@@ -491,6 +540,7 @@ export default function AssetViews({
                 onOpen={onOpen}
                 actions={actions}
                 isTrash={isTrash}
+                linked={linkedIds.has(asset.id)}
                 style={{ aspectRatio: aspectOf(asset) }}
               />
             ))}
@@ -517,6 +567,7 @@ export default function AssetViews({
           onOpen={onOpen}
           actions={actions}
           isTrash={isTrash}
+          linked={linkedIds.has(asset.id)}
         />
       ))}
     </div>

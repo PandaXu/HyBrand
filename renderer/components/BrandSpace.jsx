@@ -24,10 +24,14 @@ import {
 } from '../utils.js'
 import {
   brandCompletion,
+  COLOR_CATEGORY_LABELS,
   colorValues,
+  fontFamilies,
   LOGO_ROLE_LABELS,
+  pairingsResolved,
   primaryLogoVariant,
-  TYPE_ROLE_LABELS
+  TYPE_ROLE_LABELS,
+  typeScaleSteps
 } from '../brand.js'
 
 function CardHead({ title, meta, action }) {
@@ -57,6 +61,10 @@ function ChecklistAction({ item, brand, openDialog }) {
     openDialog({ type: 'brand-color' })
   } else if (action.type === 'typeface') {
     openDialog({ type: 'brand-typeface' })
+  } else if (action.type === 'typescale') {
+    openDialog({ type: 'brand-typescale' })
+  } else if (action.type === 'pairing') {
+    openDialog({ type: 'brand-pairing' })
   }
 }
 
@@ -67,6 +75,7 @@ export default function BrandSpace() {
   const toast = useApp((state) => state.toast)
   const [exporting, setExporting] = useState(false)
   const [showAllChecks, setShowAllChecks] = useState(false)
+  const [copyMenu, setCopyMenu] = useState(null)
 
   const completion = useMemo(() => brandCompletion(brand, assets), [brand, assets])
   const primary = useMemo(() => primaryLogoVariant(brand, assets), [brand, assets])
@@ -79,6 +88,9 @@ export default function BrandSpace() {
         .slice(0, 4),
     [activeAssets]
   )
+  const scaleSteps = useMemo(() => typeScaleSteps(brand, assets), [brand, assets])
+  const typeGroups = useMemo(() => fontFamilies(brand, assets), [brand, assets])
+  const pairings = useMemo(() => pairingsResolved(brand, assets), [brand, assets])
   const assetCounts = useMemo(() => {
     const counts = { image: 0, video: 0, font: 0, doc: 0 }
     for (const asset of activeAssets) {
@@ -183,6 +195,46 @@ export default function BrandSpace() {
   async function copyColor(hex) {
     const result = await callApi(api.copyText(hex), '复制失败')
     if (result) toast(`已复制 ${hex}`, 'success')
+  }
+
+  async function copyValue(value, label) {
+    const result = await callApi(api.copyText(value), '复制失败')
+    if (result) toast(`已复制 ${label}`, 'success')
+  }
+
+  function openCopyMenu(event, color) {
+    const rect = event.currentTarget.getBoundingClientRect()
+    setCopyMenu({
+      color,
+      x: Math.min(window.innerWidth - 250, Math.max(8, rect.right - 220)),
+      y: Math.min(window.innerHeight - 260, rect.bottom + 4)
+    })
+  }
+
+  function addPairing() {
+    openDialog({ type: 'brand-pairing' })
+  }
+
+  function editPairing(pairing) {
+    openDialog({ type: 'brand-pairing', pairing })
+  }
+
+  function removePairing(pairing) {
+    confirmRemove(
+      '移除字体搭配',
+      `确定移除「${pairing.name}」吗？字体文件不会被删除。`,
+      () => api.removeBrandPairing(pairing.id)
+    )
+  }
+
+  async function downloadTypeface(typeface) {
+    const asset = byId.get(typeface.assetId)
+    if (!asset || asset.trashed) {
+      toast('字体素材不可用', 'error')
+      return
+    }
+    const saved = await callApi(api.download(asset.id), '下载字体失败')
+    if (saved) toast('字体文件已保存', 'success')
   }
 
   async function exportKit() {
@@ -355,59 +407,181 @@ export default function BrandSpace() {
 <section className="bento-card type-card">
               <CardHead
                 title="字体"
-                meta={`${brand.typography.length} 个字体角色`}
+                meta={`${brand.typography.length} 个样式 · ${typeGroups.length} 个家族`}
                 action={
                   <button className="icon-btn" onClick={addTypeface} title="添加字体">
                     <Plus size={16} />
                   </button>
                 }
               />
-              {brand.typography.length ? (
-                <div className="typeface-list">
-                  {brand.typography.map((typeface) => {
-                    const asset = byId.get(typeface.assetId)
-                    const available = asset && !asset.trashed
-                    const family = available ? `BrandFont-${asset.id}` : 'inherit'
-                    return (
-                      <div className="typeface-row" key={typeface.id}>
-                        <div
-                          className="typeface-sample"
-                          style={{ fontFamily: `'${family}', -apple-system, sans-serif` }}
-                        >
-                          {typeface.sample || `${brand.name || '品牌'} Aa 0123`}
-                        </div>
-                        <div className="typeface-meta">
-                          <span className="role-chip">{TYPE_ROLE_LABELS[typeface.role]}</span>
-                          <strong>{typeface.name || asset?.name || '素材不可用'}</strong>
-                          {typeface.note ? <p>{typeface.note}</p> : null}
-                          <span className="typeface-file">{asset?.name || '素材不可用'}</span>
-                        </div>
-                        <div className="row-tools">
+              {typeGroups.length ? (
+                <div className="font-family-list">
+                  {typeGroups.map((family) => (
+                    <div className="font-family-card" key={family.name}>
+                      <div className="font-family-head">
+                        <strong>{family.name}</strong>
+                        <span>{family.variants.length} 个样式</span>
+                      </div>
+                      {family.variants.map(({ entry, asset, available }) => {
+                        const familyCss = available ? `BrandFont-${asset.id}` : 'inherit'
+                        return (
+                          <div className="typeface-row" key={entry.id}>
+                            <div
+                              className="typeface-sample"
+                              style={{
+                                fontFamily: `'${familyCss}', -apple-system, sans-serif`,
+                                fontWeight: entry.weight || 400
+                              }}
+                            >
+                              {entry.sample || `${brand.name || '品牌'} Aa 0123`}
+                            </div>
+                            <div className="typeface-meta">
+                              <div className="type-meta-row">
+                                <span className="role-chip">{TYPE_ROLE_LABELS[entry.role]}</span>
+                                <span className="weight-chip">{entry.weight || 400}</span>
+                              </div>
+                              <strong>{entry.name || asset?.name || '素材不可用'}</strong>
+                              {entry.note ? <p>{entry.note}</p> : null}
+                              <span className="typeface-file">{asset?.name || '素材不可用'}</span>
+                            </div>
+                            <div className="row-tools">
+                              <button
+                                className="icon-btn tiny"
+                                onClick={() => downloadTypeface(entry)}
+                                title="下载字体文件"
+                              >
+                                <Download size={12} />
+                              </button>
+                              <button
+                                className="icon-btn tiny"
+                                onClick={() => editTypeface(entry)}
+                                title="编辑"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                              <button
+                                className="icon-btn tiny"
+                                onClick={() => removeTypeface(entry)}
+                                title="移除"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="bento-empty">
+                  <Type size={26} />
+                  <p>还没有字体。添加品牌字体后，可为每个字重建立样式。</p>
+                  <button className="secondary-btn small" onClick={addTypeface}>
+                    <Plus size={13} /> 添加字体
+                  </button>
+                </div>
+              )}
+
+              <div className="type-subhead">
+                <span>字阶</span>
+                <button className="text-link" onClick={() => openDialog({ type: 'brand-typescale' })}>
+                  编辑字阶
+                </button>
+              </div>
+              <div className="scale-list">
+                {scaleSteps.map((step) => (
+                  <div className="scale-row" key={step.key}>
+                    <div className="scale-meta">
+                      <span>{step.label}</span>
+                      <small>
+                        {step.size}px / {step.lineHeight}
+                      </small>
+                      <em>{step.fontName}</em>
+                    </div>
+                    <div
+                      className="scale-sample"
+                      style={{
+                        fontFamily:
+                          step.family === 'inherit'
+                            ? undefined
+                            : `'${step.family}', -apple-system, sans-serif`,
+                        fontSize: `${Math.min(step.size, 40)}px`,
+                        fontWeight: step.weight,
+                        lineHeight: step.lineHeight
+                      }}
+                    >
+                      {step.key === 'display' ? brand.name || step.sample : step.sample}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="type-subhead">
+                <span>字体搭配</span>
+                <button className="text-link" onClick={addPairing}>
+                  添加搭配
+                </button>
+              </div>
+              {pairings.length ? (
+                <div className="pairing-list">
+                  {pairings.map((pairing) => (
+                    <div className="pairing-card" key={pairing.id}>
+                      <div className="pairing-card-head">
+                        <strong>{pairing.name}</strong>
+                        <div className="pairing-tools">
                           <button
                             className="icon-btn tiny"
-                            onClick={() => editTypeface(typeface)}
-                            title="编辑"
+                            onClick={() => editPairing(pairing)}
+                            title="编辑搭配"
                           >
                             <Pencil size={12} />
                           </button>
                           <button
                             className="icon-btn tiny"
-                            onClick={() => removeTypeface(typeface)}
-                            title="移除"
+                            onClick={() => removePairing(pairing)}
+                            title="移除搭配"
                           >
                             <Trash2 size={12} />
                           </button>
                         </div>
                       </div>
-                    )
-                  })}
+                      <div
+                        className="pairing-heading"
+                        style={{
+                          fontFamily: pairing.heading
+                            ? `'${pairing.heading.family}', -apple-system, sans-serif`
+                            : undefined,
+                          fontWeight: pairing.heading?.weight || 600
+                        }}
+                      >
+                        {brand.name || '品牌标题'}
+                      </div>
+                      <div
+                        className="pairing-body"
+                        style={{
+                          fontFamily: pairing.body
+                            ? `'${pairing.body.family}', -apple-system, sans-serif`
+                            : undefined,
+                          fontWeight: pairing.body?.weight || 400
+                        }}
+                      >
+                        让品牌交付变得确定。标题、正文和注释各有清晰层级，团队可以直接照着使用。
+                      </div>
+                      {pairing.note ? <p className="pairing-note">{pairing.note}</p> : null}
+                      <span className="pairing-meta">
+                        标题：{pairing.heading?.name || '未指定'} · 正文：
+                        {pairing.body?.name || '未指定'}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="bento-empty">
-                  <Type size={26} />
-                  <p>还没有字体角色。添加品牌字体、标题字体或正文字体。</p>
-                  <button className="secondary-btn small" onClick={addTypeface}>
-                    <Plus size={13} /> 添加字体
+                <div className="bento-empty small">
+                  <Type size={20} />
+                  <p>还没有字体搭配。添加一组标题 / 正文字体组合。</p>
+                  <button className="secondary-btn small" onClick={addPairing}>
+                    <Plus size={13} /> 添加搭配
                   </button>
                 </div>
               )}
@@ -505,17 +679,22 @@ export default function BrandSpace() {
                           title={`复制 ${color.hex}`}
                         />
                         <div className="brand-color-copy">
-                          <strong>{color.name}</strong>
-                          <span>
+                          <div className="color-name-row">
+                            <span className="role-chip">
+                              {COLOR_CATEGORY_LABELS[color.category] || '主色'}
+                            </span>
+                            <strong>{color.name}</strong>
+                          </div>
+                          <span className="color-value-line">
                             {color.hex} · RGB {values.rgb}
                           </span>
-                          {color.pantone ? <span>{color.pantone}</span> : null}
+                          {color.usage ? <span className="color-usage">{color.usage}</span> : null}
                         </div>
                         <div className="row-tools">
                           <button
                             className="icon-btn tiny"
-                            onClick={() => copyColor(color.hex)}
-                            title="复制 HEX"
+                            onClick={(event) => openCopyMenu(event, color)}
+                            title="复制其他格式"
                           >
                             <Copy size={12} />
                           </button>
@@ -596,6 +775,37 @@ export default function BrandSpace() {
           </div>
         </div>
       </div>
+
+      {copyMenu ? (
+        <>
+          <div className="menu-backdrop" onClick={() => setCopyMenu(null)} />
+          <div
+            className="floating-menu color-copy-menu"
+            style={{ left: copyMenu.x, top: copyMenu.y }}
+          >
+            {[
+              ['HEX', colorValues(copyMenu.color.hex).hex],
+              ['RGB', colorValues(copyMenu.color.hex).rgb],
+              ['HSL', colorValues(copyMenu.color.hex).hsl],
+              ['CMYK', colorValues(copyMenu.color.hex).cmyk],
+              ...(copyMenu.color.pantone
+                ? [['Pantone', copyMenu.color.pantone]]
+                : [])
+            ].map(([label, value]) => (
+              <button
+                key={label}
+                onClick={() => {
+                  copyValue(value, label)
+                  setCopyMenu(null)
+                }}
+              >
+                <span>{label}</span>
+                <code>{value}</code>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   )
 }

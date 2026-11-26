@@ -27,10 +27,27 @@ function summarizeImport(result) {
   if (!result) return
   const parts = []
   if (result.added) parts.push(`已导入 ${result.added} 个素材`)
-  if (result.duplicates) parts.push(`跳过 ${result.duplicates} 个重复文件`)
+  if (result.foldersCreated) parts.push(`新建 ${result.foldersCreated} 个文件夹`)
+  if (result.duplicates) {
+    parts.push(
+      result.linked
+        ? `检测到 ${result.duplicates} 个重复文件，已在当前目录创建 ${result.linked} 个快捷链接`
+        : `跳过 ${result.duplicates} 个重复文件`
+    )
+  }
   if (result.errors) parts.push(`${result.errors} 个导入失败`)
   if (!parts.length) parts.push('没有可导入的文件')
-  toast(parts.join('，'), result.added ? 'success' : result.errors ? 'error' : 'info')
+  const succeeded = result.added > 0 || result.foldersCreated > 0 || result.linked > 0
+  const state = useApp.getState()
+  const action =
+    result.duplicates > 0 && result.duplicateItems?.length
+      ? {
+          label: '查看已有',
+          onClick: () =>
+            state.openDialog({ type: 'duplicates', items: result.duplicateItems })
+        }
+      : null
+  state.toast(parts.join('，'), succeeded ? 'success' : result.errors ? 'error' : 'info', action)
 }
 
 export default function App() {
@@ -56,6 +73,18 @@ export default function App() {
     [library, nav, search, filters, similar, sort]
   )
 
+  const linkedIds = useMemo(() => {
+    if (nav.type !== 'folder') return new Set()
+    return new Set(
+      view.assets
+        .filter(
+          (asset) =>
+            asset.folderId !== nav.id && (asset.linkedFolderIds || []).includes(nav.id)
+        )
+        .map((asset) => asset.id)
+    )
+  }, [view.assets, nav])
+
   const activeAsset = activeId ? library.assets.find((asset) => asset.id === activeId) : null
   const lightboxAsset = lightboxId
     ? library.assets.find((asset) => asset.id === lightboxId)
@@ -76,6 +105,17 @@ export default function App() {
     const result = await callApi(api.pickAndImport(folderId), '导入失败')
     if (!result) return
     if (state.nav.type === 'trash' || state.similar) state.setNav({ type: 'all' })
+    summarizeImport(result)
+  }
+
+  async function pickFolder() {
+    const state = useApp.getState()
+    const folderId = state.nav.type === 'folder' ? state.nav.id : null
+    const result = await callApi(api.pickAndImportFolder(folderId), '上传文件夹失败')
+    if (!result) return
+    if (state.nav.type === 'trash' || state.similar || state.nav.type === 'brand') {
+      state.setNav({ type: 'all' })
+    }
     summarizeImport(result)
   }
 
@@ -203,6 +243,13 @@ export default function App() {
     if (result?.error) toast('没有可用的默认应用打开该文件', 'error')
   }
 
+  async function unlinkAsset(asset) {
+    const nav = useApp.getState().nav
+    if (nav.type !== 'folder') return
+    const result = await callApi(api.unlinkAssetFolder(asset.id, nav.id), '移除快捷链接失败')
+    if (result) toast('已移除快捷链接', 'success')
+  }
+
   function requestDeleteFolder(folder) {
     const count = view.countsByFolder.get(folder.id) || 0
     const state = useApp.getState()
@@ -236,6 +283,7 @@ export default function App() {
 
   handlersRef.current = {
     pickImport,
+    pickFolder,
     importPathsTo,
     openNewFolder,
     openNewFolderInCurrent,
@@ -284,6 +332,7 @@ export default function App() {
     const unsubscribe = api.onMenuCommand((command) => {
       const state = useApp.getState()
       if (command === 'import') handlersRef.current.pickImport()
+      else if (command === 'import-folder') handlersRef.current.pickFolder()
       else if (command === 'new-folder') handlersRef.current.openNewFolderInCurrent()
       else if (command === 'settings') state.openDialog({ type: 'settings' })
     })
@@ -484,6 +533,7 @@ export default function App() {
           onSearch={(value) => useApp.getState().setSearch(value)}
           onNavigate={(nextNav) => useApp.getState().setNav(nextNav)}
           onPickImport={pickImport}
+          onPickFolder={pickFolder}
           onNewFolder={openNewFolderInCurrent}
           onSearchByImage={searchByImage}
           onEmptyTrash={requestEmptyTrash}
@@ -547,7 +597,9 @@ export default function App() {
               onOpenExternal={openAsset}
               onTrash={(asset) => trashAssets([asset.id])}
               onRestore={(asset) => restoreAssets([asset.id])}
+              onUnlink={unlinkAsset}
               isTrash={nav.type === 'trash'}
+              linkedIds={linkedIds}
             />
           ) : (
             <EmptyState
@@ -556,6 +608,7 @@ export default function App() {
               filtersActive={filtersActive}
               similar={Boolean(similar)}
               onPickImport={pickImport}
+              onPickFolder={pickFolder}
               onNewFolder={openNewFolderInCurrent}
               onClearFilters={() => useApp.getState().clearFilters()}
               onClearSearch={() => useApp.getState().setSearch('')}

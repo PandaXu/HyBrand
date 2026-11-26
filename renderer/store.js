@@ -39,6 +39,9 @@ export const useApp = create((set, get) => ({
   library: {
     assets: [],
     folders: [],
+    spaces: [],
+    activeSpaceId: null,
+    brand: null,
     stats: { active: 0, trash: 0, bytes: 0, total: 0 },
     dataDir: ''
   },
@@ -60,6 +63,25 @@ export const useApp = create((set, get) => ({
 
   setLibrary: (snapshot) =>
     set((state) => {
+      const spaceChanged =
+        Boolean(state.library.activeSpaceId) &&
+        state.library.activeSpaceId !== snapshot.activeSpaceId
+      if (spaceChanged) {
+        if (state.similar?.token) api.clearSearchTemp(state.similar.token).catch(() => {})
+        return {
+          library: snapshot,
+          ready: true,
+          nav: { type: 'all' },
+          search: '',
+          filters: emptyFilters(),
+          selection: [],
+          activeId: null,
+          lightboxId: null,
+          similar: null,
+          expandedFolders: [],
+          dialog: null
+        }
+      }
       const ids = new Set(snapshot.assets.map((asset) => asset.id))
       const selection = state.selection.filter((id) => ids.has(id))
       const activeId = state.activeId && ids.has(state.activeId) ? state.activeId : null
@@ -177,6 +199,7 @@ export const useApp = create((set, get) => ({
   clearSelection: () => set({ selection: [], activeId: null }),
   setActiveId: (activeId) => set({ activeId, selection: activeId ? [activeId] : [] }),
 
+
   openLightbox: (lightboxId) => set({ lightboxId }),
   closeLightbox: () => set({ lightboxId: null }),
 
@@ -217,10 +240,12 @@ export const useApp = create((set, get) => ({
   openDialog: (dialog) => set({ dialog }),
   closeDialog: () => set({ dialog: null }),
 
-  toast: (message, type = 'info') => {
+  toast: (message, type = 'info', action = null) => {
     const id = uid()
-    set((state) => ({ toasts: [...state.toasts.slice(-2), { id, message, type }] }))
-    setTimeout(() => get().dismissToast(id), 3600)
+    set((state) => ({
+      toasts: [...state.toasts.slice(-2), { id, message, type, action }]
+    }))
+    setTimeout(() => get().dismissToast(id), action ? 6500 : 3600)
     return id
   },
   dismissToast: (id) =>

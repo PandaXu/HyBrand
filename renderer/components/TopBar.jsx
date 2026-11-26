@@ -3,6 +3,7 @@ import {
   Camera,
   ChevronRight,
   FolderPlus,
+  FolderUp,
   Loader2,
   Plus,
   Search,
@@ -22,6 +23,7 @@ export default function TopBar({
   onSearch,
   onNavigate,
   onPickImport,
+  onPickFolder,
   onNewFolder,
   onSearchByImage,
   onEmptyTrash
@@ -136,6 +138,14 @@ export default function TopBar({
                     }}
                   >
                     <Upload size={14} /> 上传文件
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCreateOpen(false)
+                      onPickFolder()
+                    }}
+                  >
+                    <FolderUp size={14} /> 上传文件夹
                   </button>
                   <button
                     onClick={() => {
